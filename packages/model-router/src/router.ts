@@ -133,8 +133,13 @@ export async function route<T extends TaskType>(
       globalEmitter.emit(event);
       attempts.push(event);
 
-      const output = { type: task.type, content: response.content } as TaskOutput & { type: T };
-      return { ok: true, data: output, event };
+      let output: TaskOutput;
+      if (task.type === 'embedding') {
+        output = { type: 'embedding', embeddings: response.embeddings ?? [] } as unknown as TaskOutput & { type: T };
+      } else {
+        output = { type: task.type, content: response.content } as unknown as TaskOutput & { type: T };
+      }
+      return { ok: true, data: output as TaskOutput & { type: T }, event };
     } catch (error) {
       const durationMs = Date.now() - start;
       const errMsg = error instanceof Error ? error.message : String(error);
@@ -180,4 +185,50 @@ export async function route<T extends TaskType>(
     },
     event: lastAttempt,
   };
+}
+
+export async function* stream<T extends TaskType>(
+  task: TaskInput & { type: T },
+  opts?: RouteOptions,
+): AsyncGenerator<string, void, unknown> {
+  const parseResult = TaskTypeSchema.safeParse(task.type);
+  if (!parseResult.success) {
+    throw new RouterError('INVALID_TASK', `Invalid task type: ${task.type}`);
+  }
+
+  if (task.type === 'embedding' || task.type === 'voice' || task.type === 'research') {
+    throw new RouterError('UNSUPPORTED_TASK', `Streaming is out of scope for task type "${task.type}"`);
+  }
+
+  const chain = resolvePolicy(task.type, opts?.policyOverride);
+
+  if (chain.length === 0) {
+    throw new RouterError('ALL_FALLBACKS_FAILED', `No providers configured for task type "${task.type}"`);
+  }
+
+  for (const entry of chain) {
+    try {
+      const provider = getProvider(entry.provider);
+      const config = getProviderConfig(entry.provider, opts);
+      const configWithModel: ProviderConfig = {
+        ...config,
+        modelId: entry.modelId,
+      };
+
+      if (!provider.stream) {
+        throw new RouterError('UNSUPPORTED_TASK', `Provider ${entry.provider} does not support streaming`);
+      }
+
+      yield* provider.stream(task, configWithModel);
+      return;
+    } catch (error) {
+      const errCode = error instanceof RouterError ? error.code : 'PROVIDER_ERROR';
+      if (errCode === 'UNSUPPORTED_TASK') {
+        throw error;
+      }
+      continue;
+    }
+  }
+
+  throw new RouterError('ALL_FALLBACKS_FAILED', `All provider(s) failed for stream task type "${task.type}"`);
 }

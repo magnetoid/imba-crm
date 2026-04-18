@@ -1,43 +1,44 @@
 import { describe, expect, it } from 'vitest';
-import { defaultPolicy, resolvePolicy } from '../src/policies/index.js';
+import { defaultPolicy } from '../src/policies/default.js';
+import { resolvePolicy } from '../src/policies/index.js';
 import type { Policy, TaskType } from '../src/types.js';
 
 describe('resolvePolicy', () => {
-  it('returns anthropic chain for reasoning', () => {
+  it('returns default chain for reasoning', () => {
     const chain = resolvePolicy('reasoning');
-    expect(chain).toEqual([{ provider: 'anthropic', modelId: 'claude-opus-4-7' }]);
+    expect(chain).toEqual(defaultPolicy.reasoning);
   });
 
-  it('returns anthropic chain for drafting', () => {
+  it('returns default chain for drafting', () => {
     const chain = resolvePolicy('drafting');
-    expect(chain).toEqual([{ provider: 'anthropic', modelId: 'claude-sonnet-4-6' }]);
+    expect(chain).toEqual(defaultPolicy.drafting);
   });
 
-  it('returns anthropic chain for classification', () => {
+  it('returns default chain for classification', () => {
     const chain = resolvePolicy('classification');
-    expect(chain).toEqual([{ provider: 'anthropic', modelId: 'claude-haiku-4-5' }]);
+    expect(chain).toEqual(defaultPolicy.classification);
   });
 
-  it('returns anthropic chain for extraction', () => {
+  it('returns default chain for extraction', () => {
     const chain = resolvePolicy('extraction');
-    expect(chain).toEqual([{ provider: 'anthropic', modelId: 'claude-sonnet-4-6' }]);
+    expect(chain).toEqual(defaultPolicy.extraction);
   });
 
-  it('returns anthropic chain for vision', () => {
+  it('returns default chain for vision', () => {
     const chain = resolvePolicy('vision');
-    expect(chain).toEqual([{ provider: 'anthropic', modelId: 'claude-sonnet-4-6' }]);
+    expect(chain).toEqual(defaultPolicy.vision);
   });
 
-  it('returns empty chain for embedding', () => {
-    expect(resolvePolicy('embedding')).toEqual([]);
+  it('returns default chain for embedding', () => {
+    expect(resolvePolicy('embedding')).toEqual(defaultPolicy.embedding);
   });
 
-  it('returns empty chain for voice', () => {
-    expect(resolvePolicy('voice')).toEqual([]);
+  it('returns default chain for voice', () => {
+    expect(resolvePolicy('voice')).toEqual(defaultPolicy.voice);
   });
 
-  it('returns empty chain for research', () => {
-    expect(resolvePolicy('research')).toEqual([]);
+  it('returns default chain for research', () => {
+    expect(resolvePolicy('research')).toEqual(defaultPolicy.research);
   });
 
   it('override replaces the default chain', () => {

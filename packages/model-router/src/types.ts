@@ -158,6 +158,7 @@ export interface ProviderConfig {
 
 export interface ProviderResponse {
   content: string;
+  embeddings?: number[][];
   tokensIn: number;
   tokensOut: number;
   model: string;
@@ -167,6 +168,7 @@ export interface ProviderResponse {
 export interface ModelProvider {
   name: string;
   execute(task: TaskInput, config: ProviderConfig): Promise<ProviderResponse>;
+  stream?(task: TaskInput, config: ProviderConfig): AsyncGenerator<string, void, unknown>;
 }
 
 // ── Policy types ────────────────────────────────────────────────────────────

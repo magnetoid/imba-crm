@@ -1,4 +1,4 @@
-export { route, configure } from './router.js';
+export { route, stream, configure } from './router.js';
 export { RouterError, ErrorCodes } from './errors.js';
 export type { ErrorCode } from './errors.js';
 export { calculateCost } from './cost.js';

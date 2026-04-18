@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AICallEvent, DraftingInput, ProviderConfig } from '../src/types.js';
-import { configure, route } from '../src/router.js';
+import { configure, route, stream } from '../src/router.js';
 import { createEventEmitter } from '../src/events.js';
 import { registerProvider } from '../src/providers/index.js';
 import { RouterError } from '../src/errors.js';
 
-function createMockProvider(name: string, response: { content: string; fail?: boolean; error?: RouterError }) {
+function createMockProvider(name: string, response: { content: string; fail?: boolean; error?: RouterError; streamFail?: boolean }) {
   return {
     name,
     execute: vi.fn().mockImplementation(async () => {
@@ -19,6 +19,12 @@ function createMockProvider(name: string, response: { content: string; fail?: bo
         model: 'test-model',
         raw: {},
       };
+    }),
+    stream: vi.fn().mockImplementation(async function* () {
+      if (response.streamFail) {
+        throw response.error ?? new RouterError('PROVIDER_ERROR', `${name} stream failed`);
+      }
+      yield response.content;
     }),
   };
 }
@@ -188,5 +194,65 @@ describe('Router', () => {
       expect(result.error.code).toBe('UNSUPPORTED_TASK');
     }
     expect(fallbackProvider.execute).not.toHaveBeenCalled();
+  });
+
+  describe('stream', () => {
+    beforeEach(() => {
+      configure({
+        providerConfigs: { providerA: testConfig, providerB: testConfig },
+      });
+    });
+
+    it('yields chunks from provider', async () => {
+      const mockProvider = createMockProvider('providerA', { content: 'chunk' });
+      registerProvider('providerA', () => mockProvider);
+
+      const generator = stream(draftingTask, {
+        policyOverride: { drafting: [{ provider: 'providerA', modelId: 'model-a' }] },
+      });
+
+      const chunks = [];
+      for await (const chunk of generator) {
+        chunks.push(chunk);
+      }
+
+      expect(chunks).toEqual(['chunk']);
+    });
+
+    it('falls back on stream failure', async () => {
+      const failProvider = createMockProvider('providerA', { content: '', streamFail: true });
+      const successProvider = createMockProvider('providerB', { content: 'fallback chunk' });
+
+      registerProvider('providerA', () => failProvider);
+      registerProvider('providerB', () => successProvider);
+
+      const generator = stream(draftingTask, {
+        policyOverride: {
+          drafting: [
+            { provider: 'providerA', modelId: 'model-a' },
+            { provider: 'providerB', modelId: 'model-b' },
+          ],
+        },
+      });
+
+      const chunks = [];
+      for await (const chunk of generator) {
+        chunks.push(chunk);
+      }
+
+      expect(chunks).toEqual(['fallback chunk']);
+      expect(failProvider.stream).toHaveBeenCalledOnce();
+      expect(successProvider.stream).toHaveBeenCalledOnce();
+    });
+
+    it('throws UNSUPPORTED_TASK for embedding', async () => {
+      const promise = (async () => {
+        for await (const _ of stream({ type: 'embedding', input: 'test' })) {
+          // empty
+        }
+      })();
+
+      await expect(promise).rejects.toMatchObject({ code: 'UNSUPPORTED_TASK' });
+    });
   });
 });

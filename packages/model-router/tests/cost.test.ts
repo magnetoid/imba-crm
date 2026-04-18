@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateCost } from '../src/cost.js';
+import { PRICING, calculateCost } from '../src/cost.js';
 
 describe('calculateCost', () => {
   it('calculates cost for claude-opus-4-7', () => {

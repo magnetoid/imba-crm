@@ -1,10 +1,20 @@
 import type { ModelProvider } from '../types.js';
 import { createAnthropicProvider } from './anthropic.js';
+import { createDeepgramProvider } from './deepgram.js';
+import { createGoogleProvider } from './google.js';
+import { createOllamaProvider } from './ollama.js';
+import { createOpenAIProvider } from './openai.js';
+import { createPerplexityProvider } from './perplexity.js';
 
 export type ProviderFactory = () => ModelProvider;
 
 const registry: Record<string, ProviderFactory> = {
   anthropic: createAnthropicProvider,
+  openai: createOpenAIProvider,
+  google: createGoogleProvider,
+  ollama: createOllamaProvider,
+  deepgram: createDeepgramProvider,
+  perplexity: createPerplexityProvider,
 };
 
 export function getProvider(name: string): ModelProvider {

@@ -7,7 +7,7 @@ interface ModelPricing {
   outputPerMTok: number;
 }
 
-const ANTHROPIC_PRICING: Record<string, ModelPricing> = {
+const PRICING: Record<string, ModelPricing> = {
   // Current models
   'claude-opus-4-7': { inputPerMTok: 5, outputPerMTok: 25 },
   'claude-sonnet-4-6': { inputPerMTok: 3, outputPerMTok: 15 },
@@ -27,6 +27,27 @@ const ANTHROPIC_PRICING: Record<string, ModelPricing> = {
   'claude-opus-4-20250514': { inputPerMTok: 15, outputPerMTok: 75 },
   'claude-opus-4-0': { inputPerMTok: 15, outputPerMTok: 75 },
   'claude-3-haiku-20240307': { inputPerMTok: 0.25, outputPerMTok: 1.25 },
+
+  // OpenAI
+  'gpt-5': { inputPerMTok: 10, outputPerMTok: 30 },
+  'gpt-5-mini': { inputPerMTok: 0.15, outputPerMTok: 0.60 },
+  'gpt-5 vision': { inputPerMTok: 10, outputPerMTok: 30 },
+  'text-embedding-3-large': { inputPerMTok: 0.13, outputPerMTok: 0 },
+
+  // Google
+  'gemini-flash': { inputPerMTok: 0.35, outputPerMTok: 1.05 },
+
+  // Ollama (local) - cost is 0
+  'qwen-72b': { inputPerMTok: 0, outputPerMTok: 0 },
+  'qwen-14b': { inputPerMTok: 0, outputPerMTok: 0 },
+  'bge-large': { inputPerMTok: 0, outputPerMTok: 0 },
+  'whisper': { inputPerMTok: 0, outputPerMTok: 0 },
+
+  // Deepgram
+  'nova-3': { inputPerMTok: 4.3, outputPerMTok: 0 }, // audio duration to tokens approximation
+
+  // Perplexity
+  'sonar-pro': { inputPerMTok: 3, outputPerMTok: 15 },
 };
 
 /**
@@ -34,7 +55,7 @@ const ANTHROPIC_PRICING: Record<string, ModelPricing> = {
  * Returns cost as a decimal number of cents (USD).
  */
 export function calculateCost(model: string, tokensIn: number, tokensOut: number): number {
-  const pricing = ANTHROPIC_PRICING[model];
+  const pricing = PRICING[model];
   if (!pricing) {
     return 0;
   }
@@ -46,4 +67,4 @@ export function calculateCost(model: string, tokensIn: number, tokensOut: number
   return totalCents;
 }
 
-export { ANTHROPIC_PRICING };
+export { PRICING };
