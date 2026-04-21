@@ -1,0 +1,307 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────
+#  Imba Production — Full Stack
+#  Services:
+#    · imba-web       → Vite/React app (nginx)
+#    · redis          → Session cache / rate limiting
+#    · supabase-db    → PostgreSQL (Supabase-compatible)
+#    · supabase-rest  → PostgREST API
+#    · supabase-auth  → GoTrue auth
+#    · supabase-meta  → Supabase meta service
+#    · supabase-kong  → API gateway (optional, use for multi-service)
+#
+#  For Coolify: import this file, set env vars in Coolify UI.
+#  Reverse proxy (Plesk/Coolify Traefik) handles SSL termination.
+# ─────────────────────────────────────────────────────────────
+
+networks:
+  imba-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  supabase-storage:
+
+services:
+
+  supabase-db-perms:
+    image: alpine:3.20
+    container_name: imba-supabase-db-perms
+    restart: "no"
+    user: "0:0"
+    command: ["sh", "-c", "chown -R 999:999 /var/lib/postgresql/data || true"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - imba-net
+    labels:
+      - "traefik.enable=false"
+
+  # ── Frontend app ──────────────────────────────────────────
+  imba-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
+        VITE_APP_URL: ${VITE_APP_URL:-http://localhost}
+    container_name: imba-web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${APP_PORT:-9102}:80"
+    networks:
+      - imba-net
+    depends_on:
+      - redis
+      - supabase-db
+    environment:
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    labels:
+      # Coolify / Traefik labels — adjust domain in .env
+      - "traefik.enable=true"
+      - "traefik.http.routers.imba-web.rule=Host(`${APP_DOMAIN:-imbaproduction.com}`)"
+      - "traefik.http.routers.imba-web.entrypoints=websecure"
+      - "traefik.http.routers.imba-web.tls.certresolver=letsencrypt"
+      - "traefik.http.services.imba-web.loadbalancer.server.port=80"
+
+  # ── Redis ─────────────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    container_name: imba-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-changeme_redis}
+      --maxmemory ${REDIS_MAX_MEMORY:-256mb}
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
+      --save 900 1
+      --save 300 10
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-16379}:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - imba-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme_redis}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      - "traefik.enable=false"
+
+  # ── Supabase PostgreSQL ───────────────────────────────────
+  supabase-db:
+    depends_on:
+      supabase-db-perms:
+        condition: service_completed_successfully
+    image: supabase/postgres:15.1.0.147
+    container_name: imba-supabase-db
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - imba-net
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-imba_production}
+      POSTGRES_USER: ${POSTGRES_USER:-supabase}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_postgres}
+      PGDATA: /var/lib/postgresql/data/pgdata
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-min-32-chars}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-supabase} -d ${POSTGRES_DB:-imba_production}"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+    labels:
+      - "traefik.enable=false"
+
+  # ── PostgREST (Supabase REST API) ─────────────────────────
+  supabase-rest:
+    image: postgrest/postgrest:v12.0.2
+    container_name: imba-supabase-rest
+    restart: unless-stopped
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    networks:
+      - imba-net
+    environment:
+      PGRST_DB_URI: postgres://${POSTGRES_USER:-supabase}:${POSTGRES_PASSWORD:-changeme_postgres}@supabase-db:5432/${POSTGRES_DB:-imba_production}
+      PGRST_DB_SCHEMA: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-min-32-chars}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-min-32-chars}
+      PGRST_APP_SETTINGS_JWT_EXP: ${JWT_EXPIRY:-3600}
+    ports:
+      - "127.0.0.1:${POSTGREST_PORT:-9103}:3000"
+    labels:
+      - "traefik.enable=false"
+
+  # ── GoTrue (Supabase Auth) ────────────────────────────────
+  supabase-auth:
+    image: supabase/gotrue:v2.143.0
+    container_name: imba-supabase-auth
+    restart: unless-stopped
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    networks:
+      - imba-net
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${SUPABASE_AUTH_EXTERNAL_URL:-http://localhost:9999}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://${POSTGRES_USER:-supabase}:${POSTGRES_PASSWORD:-changeme_postgres}@supabase-db:5432/${POSTGRES_DB:-imba_production}?search_path=auth
+      GOTRUE_SITE_URL: ${VITE_APP_URL:-http://localhost:3000}
+      GOTRUE_URI_ALLOW_LIST: ${GOTRUE_URI_ALLOW_LIST:-}
+      GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-false}
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: ${JWT_EXPIRY:-3600}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-min-32-chars}
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: ${MAILER_AUTOCONFIRM:-true}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:-admin@imbaproduction.com}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-smtp.mailgun.org}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
+      GOTRUE_SMTP_USER: ${SMTP_USER:-}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-Imba Production}
+    ports:
+      - "127.0.0.1:${AUTH_PORT:-9104}:9999"
+    labels:
+      - "traefik.enable=false"
+
+  # ── Supabase Storage ──────────────────────────────────────
+  supabase-storage:
+    image: supabase/storage-api:v0.46.4
+    container_name: imba-supabase-storage
+    restart: unless-stopped
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+      supabase-rest:
+        condition: service_started
+    networks:
+      - imba-net
+    volumes:
+      - supabase-storage:/var/lib/storage
+    environment:
+      ANON_KEY: ${SUPABASE_ANON_KEY:-your-anon-key}
+      SERVICE_KEY: ${SUPABASE_SERVICE_KEY:-your-service-key}
+      POSTGREST_URL: http://supabase-rest:3000
+      PGRST_JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-min-32-chars}
+      DATABASE_URL: postgres://${POSTGRES_USER:-supabase}:${POSTGRES_PASSWORD:-changeme_postgres}@supabase-db:5432/${POSTGRES_DB:-imba_production}
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      GLOBAL_S3_BUCKET: stub
+      ENABLE_IMAGE_TRANSFORMATION: "true"
+      IMGPROXY_URL: http://imgproxy:5001
+    ports:
+      - "127.0.0.1:${STORAGE_PORT:-9105}:5000"
+    labels:
+      - "traefik.enable=false"
+
+  # ── Kong API Gateway (Supabase routing) ───────────────────
+  supabase-kong:
+    image: kong:2.8.1
+    container_name: imba-supabase-kong
+    restart: unless-stopped
+    depends_on:
+      - supabase-auth
+      - supabase-rest
+      - supabase-storage
+    networks:
+      - imba-net
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,key-auth,acl,basic-auth
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: "64 160k"
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-your-anon-key}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY:-your-service-key}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:-admin}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-changeme_dashboard}
+    volumes:
+      - ./scripts/kong.yml:/var/lib/kong/kong.yml:ro
+    ports:
+      - "127.0.0.1:${KONG_HTTP_PORT:-9100}:8000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.supabase-kong.rule=Host(`${SUPABASE_DOMAIN:-supabase.imbaproduction.com}`)"
+      - "traefik.http.routers.supabase-kong.entrypoints=websecure"
+      - "traefik.http.routers.supabase-kong.tls.certresolver=letsencrypt"
+      - "traefik.http.services.supabase-kong.loadbalancer.server.port=8000"
+
+  # ── Supabase Studio (optional, disable in prod if not needed) ──
+  supabase-studio:
+    image: supabase/studio:20240101-8e4a094
+    container_name: imba-supabase-studio
+    restart: unless-stopped
+    depends_on:
+      - supabase-kong
+    networks:
+      - imba-net
+    environment:
+      STUDIO_PG_META_URL: http://supabase-meta:8080
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_postgres}
+      DEFAULT_ORGANIZATION_NAME: ${STUDIO_DEFAULT_ORGANIZATION:-Imba Production}
+      DEFAULT_PROJECT_NAME: ${STUDIO_DEFAULT_PROJECT:-imba-production}
+      SUPABASE_URL: http://supabase-kong:8000
+      SUPABASE_PUBLIC_URL: ${SUPABASE_PUBLIC_URL:-http://localhost:8000}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-your-anon-key}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY:-your-service-key}
+    ports:
+      - "127.0.0.1:${STUDIO_PORT:-9101}:3000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.supabase-studio.rule=Host(`${STUDIO_DOMAIN:-studio.imbaproduction.com}`)"
+      - "traefik.http.routers.supabase-studio.entrypoints=websecure"
+      - "traefik.http.routers.supabase-studio.tls.certresolver=letsencrypt"
+      - "traefik.http.services.supabase-studio.loadbalancer.server.port=3000"
+      - "traefik.http.routers.supabase-studio.middlewares=studio-auth"
+      - "traefik.http.middlewares.studio-auth.basicauth.users=${STUDIO_AUTH_USERS:-admin:$$apr1$$xyz}"
+
+  # ── Supabase Meta (pg-meta) ───────────────────────────────
+  supabase-meta:
+    image: supabase/postgres-meta:v0.75.0
+    container_name: imba-supabase-meta
+    restart: unless-stopped
+    depends_on:
+      supabase-db:
+        condition: service_healthy
+    networks:
+      - imba-net
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: supabase-db
+      PG_META_DB_PORT: 5432
+      PG_META_DB_NAME: ${POSTGRES_DB:-imba_production}
+      PG_META_DB_USER: ${POSTGRES_USER:-supabase}
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD:-changeme_postgres}
+    labels:
+      - "traefik.enable=false"

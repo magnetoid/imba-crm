@@ -1,0 +1,75 @@
+{
+  "nav": {
+    "work": "Work",
+    "services": "Services",
+    "about": "About",
+    "blog": "Blog",
+    "contact": "Contact",
+    "get_quote": "Get a quote"
+  },
+  "home": {
+    "hero_cta_primary": "See our work",
+    "hero_cta_secondary": "Explore services",
+    "services_title": "What we create",
+    "services_subtitle": "From concept to distribution — every format, every platform.",
+    "portfolio_title": "Selected work",
+    "portfolio_subtitle": "A cross-section of our recent projects.",
+    "testimonials_title": "What clients say",
+    "quote_title": "Start your project",
+    "quote_subtitle": "Tell us about your vision."
+  },
+  "services": {
+    "title": "Our Services",
+    "subtitle": "End-to-end video production for every channel and format.",
+    "learn_more": "Learn more"
+  },
+  "work": {
+    "title": "Our Work",
+    "subtitle": "Cinematic storytelling across brand, product, social, AI, and beyond.",
+    "filter_all": "All"
+  },
+  "blog": {
+    "title": "Insights",
+    "subtitle": "Ideas, process, and perspective from the Imba Production team.",
+    "read_more": "Read article",
+    "min_read": "min read"
+  },
+  "about": {
+    "title": "About Imba Production",
+    "subtitle": "We believe video is the most powerful medium for brand storytelling."
+  },
+  "contact": {
+    "title": "Let's make something remarkable.",
+    "subtitle": "Tell us about your project and we'll respond within 24 hours.",
+    "form_name": "Full name",
+    "form_email": "Email",
+    "form_company": "Company",
+    "form_service": "Service type",
+    "form_budget": "Budget range",
+    "form_message": "Tell us about your project",
+    "form_submit": "Send message",
+    "form_success": "Message sent! We'll be in touch within 24 hours.",
+    "form_error": "Something went wrong. Please try again."
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "Something went wrong.",
+    "back": "Back",
+    "close": "Close",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "add": "Add",
+    "view_all": "View all"
+  },
+  "footer": {
+    "tagline": "Stories that move people to act.",
+    "services": "Services",
+    "company": "Company",
+    "legal": "Legal",
+    "privacy": "Privacy Policy",
+    "terms": "Terms of Service",
+    "rights": "All rights reserved."
+  }
+}
