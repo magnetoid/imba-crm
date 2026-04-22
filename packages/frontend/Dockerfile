@@ -1,43 +1,40 @@
-# ── Stage 1: Build ────────────────────────────────────────
-FROM node:20-alpine AS builder
+# syntax=docker/dockerfile:1.6
+# ── Marketing + CMS (imbaproduction.com) ─────────────────────
+# Built from the repo root so pnpm workspace can resolve @imba/shared.
+# docker build -f packages/frontend/Dockerfile .
 
+FROM node:20-alpine AS base
+RUN corepack enable && corepack prepare pnpm@10 --activate
 WORKDIR /app
 
-# Copy package files first for layer caching
-COPY package.json package-lock.json* ./
+# ── Deps: install workspace deps for this filter root ─────────
+FROM base AS deps
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/frontend/package.json ./packages/frontend/
+RUN pnpm install --filter ./packages/frontend... --frozen-lockfile=false
 
-RUN npm ci --frozen-lockfile
-
-# Copy source
-COPY . .
-
-# Build args injected at build time by Coolify
+# ── Build ──────────────────────────────────────────────────────
+FROM deps AS build
 ARG VITE_SUPABASE_URL
 ARG VITE_SUPABASE_ANON_KEY
 ARG VITE_APP_URL
-
 ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
 ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
 ENV VITE_APP_URL=$VITE_APP_URL
 
-RUN npm run build
+COPY packages/shared ./packages/shared
+COPY packages/frontend ./packages/frontend
+RUN pnpm --filter imba-production-web build
 
-# ── Stage 2: Serve ────────────────────────────────────────
-FROM nginx:1.25-alpine AS runner
-
-# Remove default nginx config
+# ── Runtime: nginx serving the SPA ─────────────────────────────
+FROM nginx:1.27-alpine AS runner
 RUN rm /etc/nginx/conf.d/default.conf
+COPY packages/frontend/nginx/default.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/packages/frontend/dist /usr/share/nginx/html
 
-# Copy our nginx config
-COPY nginx/default.conf /etc/nginx/conf.d/default.conf
-
-# Copy built assets
-COPY --from=builder /app/dist /usr/share/nginx/html
-
-# Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://localhost:80/health || exit 1
+  CMD wget -qO- http://localhost/health || exit 1
 
 EXPOSE 80
-
 CMD ["nginx", "-g", "daemon off;"]
