@@ -13,17 +13,13 @@ export interface AIRequestOptions {
 export interface CRMRuntimeSettings {
   active_ai_provider: AIProvider
   active_ai_model: string
-  anthropic_api_key: string
   anthropic_model: string
   anthropic_models: string[]
   anthropic_temperature: number
-  openai_api_key: string
   openai_model: string
   openai_models: string[]
-  gemini_api_key: string
   gemini_model: string
   gemini_models: string[]
-  perplexity_api_key: string
   perplexity_model: string
   perplexity_models: string[]
   ollama_base_url: string
@@ -33,7 +29,6 @@ export interface CRMRuntimeSettings {
   smtp_port: string
   smtp_secure: boolean
   smtp_username: string
-  smtp_password: string
   smtp_from_name: string
   smtp_from_email: string
   ai_outreach_tone: string
@@ -47,20 +42,22 @@ export interface CRMRuntimeSettings {
   outreach_daily_limit: number
 }
 
+export interface ProviderCredentialStatus {
+  provider: string
+  has_key: boolean
+  updated_at: string
+}
+
 export const DEFAULT_CRM_RUNTIME_SETTINGS: CRMRuntimeSettings = {
   active_ai_provider: 'anthropic',
   active_ai_model: 'claude-sonnet-4-20250514',
-  anthropic_api_key: '',
   anthropic_model: 'claude-sonnet-4-20250514',
   anthropic_models: [],
   anthropic_temperature: 0.2,
-  openai_api_key: '',
   openai_model: 'gpt-4o-mini',
   openai_models: [],
-  gemini_api_key: '',
   gemini_model: 'gemini-2.5-flash',
   gemini_models: [],
-  perplexity_api_key: '',
   perplexity_model: 'sonar',
   perplexity_models: [],
   ollama_base_url: 'http://host.docker.internal:11434',
@@ -70,7 +67,6 @@ export const DEFAULT_CRM_RUNTIME_SETTINGS: CRMRuntimeSettings = {
   smtp_port: '587',
   smtp_secure: false,
   smtp_username: '',
-  smtp_password: '',
   smtp_from_name: 'Imba Production',
   smtp_from_email: '',
   ai_outreach_tone: 'professional',
@@ -85,20 +81,44 @@ export const DEFAULT_CRM_RUNTIME_SETTINGS: CRMRuntimeSettings = {
 }
 
 export async function callAI<T = string>(prompt: string, options?: AIRequestOptions): Promise<T> {
-  const { data, error } = await supabase.functions.invoke('ai-proxy', {
-    body: {
-      prompt,
-      provider: options?.provider,
-      maxTokens: options?.maxTokens,
-      model: options?.model,
-      temperature: options?.temperature,
-      json: options?.json,
+  const response = await fetch('/api/ai/route', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
     },
+    body: JSON.stringify({
+      task: {
+        type: 'reasoning',
+        messages: [{ role: 'user', content: prompt }],
+      },
+      providerConfigs: options?.provider ? {
+        [options.provider]: { modelId: options.model, temperature: options.temperature }
+      } : undefined,
+      policyOverride: options?.provider ? {
+        reasoning: [{ provider: options.provider, modelId: options.model || '' }]
+      } : undefined
+    }),
   })
 
-  if (error) throw error
-  if (data?.error) throw new Error(data.error)
-  return data?.result as T
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`AI Request failed: ${response.status} ${text}`)
+  }
+
+  const data = await response.json()
+  
+  if (options?.json) {
+    try {
+      // Try to parse the content as JSON if requested
+      const jsonStr = data.content.replace(/```json\n?|\n?```/g, '').trim()
+      return JSON.parse(jsonStr) as T
+    } catch (e) {
+      console.warn('Failed to parse AI response as JSON', data.content)
+      return data.content as T
+    }
+  }
+
+  return data.content as T
 }
 
 export async function callAIText(prompt: string, options?: Omit<AIRequestOptions, 'json'>): Promise<string> {

@@ -1,45 +1,58 @@
 # System Analysis & Improvement Roadmap
 
-## 1. Executive Summary
-An in-depth review of the `model-router` library in the `imba-crm` project reveals that while the core architecture and testing framework (Vitest, Biome) align with the project rules in `claudecode.md`, the implementation is significantly incomplete. It currently acts as a skeletal prototype with only the Anthropic provider implemented.
+> **Status note (2026-04-21):** The prior version of this document described
+> the model-router as "skeletal prototype with only Anthropic implemented."
+> That snapshot is out of date — all six providers are wired up and have a
+> baseline test suite. This file now tracks what's actually left.
 
-## 2. Findings & Evidence
+Authoritative overview lives in [README.md](README.md). This file tracks the
+longer-term improvement plan. For the weekly plan, see the "Roadmap" section
+at the bottom of the repo-wide code review in the project chat history.
 
-### 2.1 Architecture & Feature Completeness
-**Issue:** Missing critical providers and the `stream()` interface.
-*   **Evidence:** `src/providers/` only contains `anthropic.ts`. `openai.ts`, `google.ts`, `ollama.ts`, `deepgram.ts`, and `perplexity.ts` are entirely missing.
-*   **Evidence:** `src/router.ts` only exports the `route()` function, completely omitting the `stream()` function required by the architecture rules.
-*   **Impact:** The system cannot fulfill its primary goal of routing to various models or streaming responses.
+## What shipped (closed out)
 
-### 2.2 Code Quality & Type Safety
-**Issue:** Implicit `any` boundaries and unsafe response parsing.
-*   **Evidence:** In `anthropic.ts`, `await response.json()` is assigned to an implicitly `any` variable (`data`). It then relies on optional chaining (`data.content?.filter...`) without runtime schema validation.
-*   **Impact:** If the provider API changes or returns unexpected JSON shapes (e.g., HTML error pages masquerading as 200 OK), the router will throw obscure TypeError exceptions instead of structured `RouterError`s.
+- All six providers: Anthropic, OpenAI, Google, Ollama, Deepgram, Perplexity.
+- `route()` + `stream()` in `src/router.ts`.
+- Default policy covers all eight task types (voyage removed — no adapter).
+- Provider responses validated with Zod at the network edge
+  (`openai.ts`, `google.ts`, `anthropic.ts`).
+- HTTP server entry point at `packages/model-router/src/server.ts` + tsup
+  secondary entry, so the root Docker image actually has something for
+  `/api/ai/*` to reach.
+- Root nginx hardened with security headers + gzip + SPA fallback + health
+  endpoint.
+- Frontend: error boundary, `react-hooks/exhaustive-deps` re-enabled and
+  code fixed, overdue-invoice write-in-effect removed.
 
-### 2.3 Configuration & Policy
-**Issue:** Incomplete policies and missing cost accounting.
-*   **Evidence:** `src/policies/default.ts` only lists Anthropic models and leaves `embedding`, `voice`, and `research` as empty arrays.
-*   **Evidence:** `src/cost.ts` only contains pricing for Anthropic models.
-*   **Impact:** The fallback chain and deterministic cost accounting will fail for non-Anthropic tasks.
+## Still open — high priority
 
-### 2.4 Testing & Maintainability
-**Issue:** Uncovered edge cases and missing provider tests.
-*   **Evidence:** Test coverage report shows `src/providers/anthropic.ts` at 85.82%, missing lines 46-57 (multimodal image block parsing) and `src/router.ts` missing lines 36-45 (environment variable fallback for API keys).
-*   **Impact:** Unverified code paths might crash in production, particularly for vision tasks.
+| Area | Item | Notes |
+|------|------|-------|
+| Integration | Frontend still talks to Supabase Edge Functions, not the model-router server. | Decide: migrate to Stack B, or delete Stack B. Running both drifts. |
+| Secrets | API keys readable by any admin session via `crm_runtime_settings`. | Migration [`migrations/20260421_split_provider_secrets.sql`](migrations/20260421_split_provider_secrets.sql) staged; apply + update Edge Functions + AISettings. |
+| Audit | No per-generation provenance (model/prompt/cost/who-approved/diff). | Introduce `ai_generations` table. Core to an approval-based product. |
+| Prompts | Hardcoded in components (AIOutreach, AIInbox, LeadDetail, crm-utils…). | Add `prompts(id, key, version, template)`; helper `renderPrompt(key, vars)`. |
+| Cost | Model-router emits cost events; nothing enforces caps. | Per-org daily/monthly limit in the API layer; circuit-breaker. |
+| Multi-tenancy | Single `crm_runtime_settings` row (`id=1`). No `org_id` on CRM tables. | Retrofit before customer zero. Otherwise migration pain. |
 
-## 3. Improvement Roadmap
+## Still open — medium
 
-| Priority | Area | Action | Effort | Success Metric |
-| :--- | :--- | :--- | :--- | :--- |
-| **High** | Feature Completeness | Implement `openai`, `google`, `ollama`, `deepgram`, and `perplexity` providers. | High | All 6 providers pass mocked unit tests. |
-| **High** | Feature Completeness | Add `stream()` method to `router.ts` (for supported tasks). | Medium | `stream()` yields chunks and fires events properly. |
-| **High** | Configuration | Update `cost.ts` and `default.ts` with complete taxonomy mappings. | Low | 100% coverage of the taxonomy table in `claudecode.md`. |
-| **Medium** | Code Quality | Replace `any` fetch parsing with strict `Zod` schemas for all provider responses. | Medium | Zero implicit `any` usage at network boundaries. |
-| **Medium** | Testing | Add tests for `router.ts` env var fallback and Anthropic vision/multimodal blocks. | Low | >95% test coverage across `src/`. |
+- Real inbound email (Mailgun/Postmark webhook + MIME parse + thread match).
+- Real open/click tracking (tracking pixel + link rewrite) — today "Mark
+  opened" is a human click.
+- Swap synthetic lead generator for Perplexity `research` + email validation.
+- pgvector + RAG on messages, leads, signed proposals.
+- Supabase Realtime for inbox + pipeline.
+- CI pipeline (`.github/workflows/ci.yml`): lint + typecheck + test + docker
+  build per PR.
+- Shared pnpm lockfile at the repo root (frontend currently uses npm,
+  model-router uses pnpm; Dockerfile expects pnpm).
 
-## 4. Next Steps (Immediate Implementation)
-To achieve full functionality per the `claudecode.md` specifications, the following tasks will be implemented immediately:
-1.  **Add OpenAI Provider:** Complete with tests, mapping models, and updating `cost.ts`.
-2.  **Add Google & Ollama Providers:** To support fallbacks for drafting and classification.
-3.  **Update Default Policy:** Fulfilling the `default.ts` provider fallback matrix.
-4.  **Implement `stream()`:** Updating `router.ts` to support streaming endpoints.
+## Provider / router polish (low)
+
+- Add streaming method to Anthropic provider.
+- Replace global `configure()` state with `createRouter({...})` factory
+  (current singleton violates the `claudecode.md` anti-pattern list).
+- Per-chain deadline on `route()` instead of per-attempt timeout.
+- Pino logger across the router (currently only stdout JSON lines).
+- Expand `biome.json` to enforce style rules; currently minimal.

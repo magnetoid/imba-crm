@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { RouterError } from '../errors.js';
 import type {
   ContentBlock,
@@ -8,6 +9,23 @@ import type {
   TaskInput,
 } from '../types.js';
 import { validateConfig } from './base.js';
+
+const AnthropicResponse = z.object({
+  content: z
+    .array(
+      z
+        .object({ type: z.string(), text: z.string().optional() })
+        .passthrough(),
+    )
+    .optional(),
+  usage: z
+    .object({
+      input_tokens: z.number().optional(),
+      output_tokens: z.number().optional(),
+    })
+    .optional(),
+  model: z.string().optional(),
+});
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -135,19 +153,27 @@ export function createAnthropicProvider(): ModelProvider {
           );
         }
 
-        const data = await response.json();
+        const raw: unknown = await response.json();
+        const parsed = AnthropicResponse.safeParse(raw);
+        if (!parsed.success) {
+          throw new RouterError(
+            'PROVIDER_ERROR',
+            `Anthropic response shape invalid: ${parsed.error.message}`,
+          );
+        }
+
         const content =
-          data.content
-            ?.filter((block: { type: string }) => block.type === 'text')
-            .map((block: { text: string }) => block.text)
+          parsed.data.content
+            ?.filter((block) => block.type === 'text')
+            .map((block) => block.text ?? '')
             .join('') ?? '';
 
         return {
           content,
-          tokensIn: data.usage?.input_tokens ?? 0,
-          tokensOut: data.usage?.output_tokens ?? 0,
-          model: data.model ?? model,
-          raw: data,
+          tokensIn: parsed.data.usage?.input_tokens ?? 0,
+          tokensOut: parsed.data.usage?.output_tokens ?? 0,
+          model: parsed.data.model ?? model,
+          raw,
         };
       } catch (error) {
         if (error instanceof RouterError) {

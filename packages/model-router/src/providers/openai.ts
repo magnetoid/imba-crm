@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { RouterError } from '../errors.js';
 import type {
   ContentBlock,
@@ -8,6 +9,25 @@ import type {
   TaskInput,
 } from '../types.js';
 import { validateConfig } from './base.js';
+
+const OpenAIChatResponse = z.object({
+  choices: z
+    .array(z.object({ message: z.object({ content: z.string().nullable().optional() }).passthrough() }))
+    .min(1),
+  usage: z
+    .object({
+      prompt_tokens: z.number().optional(),
+      completion_tokens: z.number().optional(),
+    })
+    .optional(),
+  model: z.string().optional(),
+});
+
+const OpenAIEmbeddingResponse = z.object({
+  data: z.array(z.object({ embedding: z.array(z.number()) })),
+  usage: z.object({ prompt_tokens: z.number().optional() }).optional(),
+  model: z.string().optional(),
+});
 
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_EMBEDDING_URL = 'https://api.openai.com/v1/embeddings';
@@ -142,27 +162,39 @@ export function createOpenAIProvider(): ModelProvider {
           );
         }
 
-        const data = await response.json();
+        const raw: unknown = await response.json();
 
         if (task.type === 'embedding') {
+          const parsed = OpenAIEmbeddingResponse.safeParse(raw);
+          if (!parsed.success) {
+            throw new RouterError(
+              'PROVIDER_ERROR',
+              `OpenAI embedding response shape invalid: ${parsed.error.message}`,
+            );
+          }
           return {
             content: '',
-            embeddings: data.data?.map((d: any) => d.embedding) ?? [],
-            tokensIn: data.usage?.prompt_tokens ?? 0,
+            embeddings: parsed.data.data.map((d) => d.embedding),
+            tokensIn: parsed.data.usage?.prompt_tokens ?? 0,
             tokensOut: 0,
-            model: data.model ?? model,
-            raw: data,
+            model: parsed.data.model ?? model,
+            raw,
           };
         }
 
-        const content = data.choices?.[0]?.message?.content ?? '';
-
+        const parsed = OpenAIChatResponse.safeParse(raw);
+        if (!parsed.success) {
+          throw new RouterError(
+            'PROVIDER_ERROR',
+            `OpenAI chat response shape invalid: ${parsed.error.message}`,
+          );
+        }
         return {
-          content,
-          tokensIn: data.usage?.prompt_tokens ?? 0,
-          tokensOut: data.usage?.completion_tokens ?? 0,
-          model: data.model ?? model,
-          raw: data,
+          content: parsed.data.choices[0]?.message.content ?? '',
+          tokensIn: parsed.data.usage?.prompt_tokens ?? 0,
+          tokensOut: parsed.data.usage?.completion_tokens ?? 0,
+          model: parsed.data.model ?? model,
+          raw,
         };
       } catch (error) {
         if (error instanceof RouterError) {

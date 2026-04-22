@@ -4,6 +4,7 @@ import '@/i18n'
 import Nav from '@/components/Nav'
 import Footer from '@/components/Footer'
 import QuoteModal from '@/components/QuoteModal'
+import ErrorBoundary from '@/components/ErrorBoundary'
 import { QuoteModalProvider } from '@/contexts/QuoteModalContext'
 import Home from '@/pages/Home'
 import Work from '@/pages/Work'
@@ -33,6 +34,7 @@ import AILeadSearcher from '@/admin/crm/AILeadSearcher'
 import AIOutreach from '@/admin/crm/AIOutreach'
 import AIInbox from '@/admin/crm/AIInbox'
 import AIAnalytics from '@/admin/crm/AIAnalytics'
+import AIAudit from '@/admin/crm/AIAudit'
 import AISettings from '@/admin/crm/AISettings'
 import Proposals from '@/admin/crm/Proposals'
 import Invoices from '@/admin/crm/Invoices'
@@ -73,9 +75,10 @@ function PublicLayout({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <QuoteModalProvider>
-      <QuoteModal />
-      <Routes>
+    <ErrorBoundary>
+      <QuoteModalProvider>
+        <QuoteModal />
+        <Routes>
         {/* Public */}
         <Route path="/" element={<PublicLayout><Home /></PublicLayout>} />
         <Route path="/work" element={<PublicLayout><Work /></PublicLayout>} />
@@ -109,10 +112,12 @@ export default function App() {
           <Route path="crm/invoices" element={<Invoices />} />
           <Route path="crm/templates" element={<Templates />} />
           <Route path="crm/analytics" element={<AIAnalytics />} />
+          <Route path="crm/audit" element={<AIAudit />} />
           <Route path="crm/settings" element={<AISettings />} />
           <Route path="crm/:id" element={<LeadDetail />} />
         </Route>
       </Routes>
-    </QuoteModalProvider>
+      </QuoteModalProvider>
+    </ErrorBoundary>
   )
 }

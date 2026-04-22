@@ -133,12 +133,10 @@ export async function route<T extends TaskType>(
       globalEmitter.emit(event);
       attempts.push(event);
 
-      let output: TaskOutput;
-      if (task.type === 'embedding') {
-        output = { type: 'embedding', embeddings: response.embeddings ?? [] } as unknown as TaskOutput & { type: T };
-      } else {
-        output = { type: task.type, content: response.content } as unknown as TaskOutput & { type: T };
-      }
+      const output: TaskOutput =
+        task.type === 'embedding'
+          ? { type: 'embedding', embeddings: response.embeddings ?? [] }
+          : { type: task.type, content: response.content };
       return { ok: true, data: output as TaskOutput & { type: T }, event };
     } catch (error) {
       const durationMs = Date.now() - start;

@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { RouterError } from '../errors.js';
 import type {
   ContentBlock,
@@ -8,6 +9,28 @@ import type {
   TaskInput,
 } from '../types.js';
 import { validateConfig } from './base.js';
+
+const GeminiResponse = z.object({
+  candidates: z
+    .array(
+      z.object({
+        content: z
+          .object({
+            parts: z
+              .array(z.object({ text: z.string().optional() }).passthrough())
+              .optional(),
+          })
+          .optional(),
+      }),
+    )
+    .optional(),
+  usageMetadata: z
+    .object({
+      promptTokenCount: z.number().optional(),
+      candidatesTokenCount: z.number().optional(),
+    })
+    .optional(),
+});
 
 const DEFAULT_MODEL = 'gemini-flash';
 const DEFAULT_TIMEOUT = 60_000;
@@ -132,19 +155,26 @@ export function createGoogleProvider(): ModelProvider {
           );
         }
 
-        const data = await response.json();
-        const candidate = data.candidates?.[0];
-        
-        const content = candidate?.content?.parts
-          ?.map((p: any) => p.text ?? '')
-          .join('') ?? '';
+        const raw: unknown = await response.json();
+        const parsed = GeminiResponse.safeParse(raw);
+        if (!parsed.success) {
+          throw new RouterError(
+            'PROVIDER_ERROR',
+            `Google response shape invalid: ${parsed.error.message}`,
+          );
+        }
+
+        const content =
+          parsed.data.candidates?.[0]?.content?.parts
+            ?.map((p) => p.text ?? '')
+            .join('') ?? '';
 
         return {
           content,
-          tokensIn: data.usageMetadata?.promptTokenCount ?? 0,
-          tokensOut: data.usageMetadata?.candidatesTokenCount ?? 0,
-          model: model,
-          raw: data,
+          tokensIn: parsed.data.usageMetadata?.promptTokenCount ?? 0,
+          tokensOut: parsed.data.usageMetadata?.candidatesTokenCount ?? 0,
+          model,
+          raw,
         };
       } catch (error) {
         if (error instanceof RouterError) {

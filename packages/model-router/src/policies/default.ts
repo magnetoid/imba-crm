@@ -22,7 +22,6 @@ export const defaultPolicy: Policy = {
   ],
   embedding: [
     { provider: 'openai', modelId: 'text-embedding-3-large' },
-    { provider: 'voyage', modelId: 'voyage-large' },
     { provider: 'ollama', modelId: 'bge-large' },
   ],
   research: [

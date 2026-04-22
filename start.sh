@@ -1,9 +1,33 @@
 #!/bin/sh
+set -eu
 
-# Start the Node.js backend in the background
-echo "Starting Model Router backend..."
-node packages/model-router/dist/index.js &
+log() {
+  printf '%s {"kind":"start_script","msg":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1"
+}
 
-# Start Nginx in the foreground to serve the frontend
-echo "Starting Nginx frontend server..."
-nginx -g "daemon off;"
+# Forward SIGTERM/SIGINT to children so Docker stop is clean.
+shutdown() {
+  log "shutdown requested"
+  if [ -n "${ROUTER_PID:-}" ]; then kill -TERM "$ROUTER_PID" 2>/dev/null || true; fi
+  if [ -n "${NGINX_PID:-}" ]; then kill -QUIT "$NGINX_PID" 2>/dev/null || true; fi
+  wait 2>/dev/null || true
+  exit 0
+}
+trap shutdown TERM INT
+
+log "starting model-router backend on :3000"
+node /app/packages/model-router/dist/server.js &
+ROUTER_PID=$!
+
+log "starting nginx"
+nginx -g 'daemon off;' &
+NGINX_PID=$!
+
+# If either process exits, bring the whole container down so Docker restarts us
+# (better than a silently half-alive container).
+set +e
+wait -n "$ROUTER_PID" "$NGINX_PID"
+EXIT_CODE=$?
+log "child exited with code $EXIT_CODE; shutting down siblings"
+shutdown
+exit $EXIT_CODE

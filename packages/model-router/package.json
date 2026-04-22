@@ -21,6 +21,8 @@
     "check": "biome check --write",
     "lint": "biome check",
     "typecheck": "tsc --noEmit",
+    "start": "node dist/server.js",
+    "dev:server": "tsx src/server.ts",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"
   },
