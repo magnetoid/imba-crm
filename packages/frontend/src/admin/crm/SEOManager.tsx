@@ -118,32 +118,6 @@ function SerpPreview({ title, description, path }: { title?: string; description
   )
 }
 
-async function callClaude(apiKey: string, prompt: string, maxTokens = 1000): Promise<string> {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-allow-browser': 'true',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'claude-opus-4-6',
-      max_tokens: maxTokens,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  })
-  const data = await res.json()
-  return data.content?.[0]?.text || ''
-}
-
-async function claudeJSON<T>(apiKey: string, prompt: string, maxTokens = 1500): Promise<T | null> {
-  const text = await callClaude(apiKey, prompt, maxTokens)
-  const match = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/m)
-  if (!match) return null
-  try { return JSON.parse(match[0]) as T } catch { return null }
-}
-
 // ─── AI Studio tab components ────────────────────────────────────────────────
 
 interface KeywordCluster {
@@ -170,13 +144,12 @@ interface FAQItem {
   answer: string
 }
 
-function AIKeywordResearch({ apiKey }: { apiKey: string }) {
+function AIKeywordResearch() {
   const [topic, setTopic] = useState('')
   const [loading, setLoading] = useState(false)
   const [clusters, setClusters] = useState<KeywordCluster[]>([])
 
   async function generate() {
-    if (!apiKey) { toast.error('Add Anthropic API key in Settings first'); return }
     if (!topic.trim()) return
     setLoading(true)
     const prompt = `You are an SEO expert. Generate keyword research for: "${topic}"
@@ -191,9 +164,13 @@ Relevance: 0-100 (how relevant to Imba Production)
 Volume: rough estimate like "100-1k", "1k-10k", "10k-100k"
 
 Return ONLY the JSON array, no other text.`
-    const result = await claudeJSON<KeywordCluster[]>(apiKey, prompt)
-    if (result) { setClusters(result); toast.success(`${result.length} keywords generated`) }
-    else toast.error('Failed to parse keywords')
+    try {
+      const result = await callAIJSON<KeywordCluster[]>(prompt)
+      if (result) { setClusters(result); toast.success(`${result.length} keywords generated`) }
+      else toast.error('Failed to parse keywords')
+    } catch {
+      toast.error('Failed to generate keywords')
+    }
     setLoading(false)
   }
 
@@ -267,14 +244,13 @@ Return ONLY the JSON array, no other text.`
   )
 }
 
-function AIContentBrief({ apiKey }: { apiKey: string }) {
+function AIContentBrief() {
   const [topic, setTopic] = useState('')
   const [pagePath, setPagePath] = useState('')
   const [loading, setLoading] = useState(false)
   const [brief, setBrief] = useState<ContentBrief | null>(null)
 
   async function generate() {
-    if (!apiKey) { toast.error('Add Anthropic API key in Settings first'); return }
     if (!topic.trim()) return
     setLoading(true)
     const pageCtx = pagePath ? ` for the page at ${pagePath}` : ''
@@ -296,9 +272,13 @@ Return ONLY a valid JSON object with this structure:
   "cta": "Call to action text",
   "internal_links": ["/work", "/contact", ...]
 }`
-    const result = await claudeJSON<ContentBrief>(apiKey, prompt, 2000)
-    if (result) { setBrief(result); toast.success('Content brief generated') }
-    else toast.error('Failed to generate brief')
+    try {
+      const result = await callAIJSON<ContentBrief>(prompt, { maxTokens: 2000 })
+      if (result) { setBrief(result); toast.success('Content brief generated') }
+      else toast.error('Failed to generate brief')
+    } catch {
+      toast.error('Failed to generate brief')
+    }
     setLoading(false)
   }
 
@@ -397,7 +377,7 @@ Return ONLY a valid JSON object with this structure:
   )
 }
 
-function AIFAQGenerator({ apiKey }: { apiKey: string }) {
+function AIFAQGenerator() {
   const [topic, setTopic] = useState('')
   const [count, setCount] = useState('8')
   const [loading, setLoading] = useState(false)
@@ -405,7 +385,6 @@ function AIFAQGenerator({ apiKey }: { apiKey: string }) {
   const [copied, setCopied] = useState(false)
 
   async function generate() {
-    if (!apiKey) { toast.error('Add Anthropic API key in Settings first'); return }
     if (!topic.trim()) return
     setLoading(true)
     const prompt = `You are an SEO expert. Generate ${count} FAQ questions and answers for: "${topic}"
@@ -418,9 +397,13 @@ Rules:
 - Questions should match real user search queries
 - Answers should be 2-4 sentences, factual and helpful
 - Cover pricing, process, timeline, quality questions where relevant`
-    const result = await claudeJSON<FAQItem[]>(apiKey, prompt)
-    if (result) { setFaqs(result); toast.success(`${result.length} FAQs generated`) }
-    else toast.error('Failed to generate FAQs')
+    try {
+      const result = await callAIJSON<FAQItem[]>(prompt)
+      if (result) { setFaqs(result); toast.success(`${result.length} FAQs generated`) }
+      else toast.error('Failed to generate FAQs')
+    } catch {
+      toast.error('Failed to generate FAQs')
+    }
     setLoading(false)
   }
 
@@ -496,7 +479,7 @@ Rules:
   )
 }
 
-function AIBatchOptimizer({ apiKey, existingRows, onRefresh }: { apiKey: string; existingRows: SeoPage[]; onRefresh: () => void }) {
+function AIBatchOptimizer({ existingRows, onRefresh }: { existingRows: SeoPage[]; onRefresh: () => void }) {
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState<string[]>([])
   const [done, setDone] = useState(false)
@@ -504,7 +487,6 @@ function AIBatchOptimizer({ apiKey, existingRows, onRefresh }: { apiKey: string;
   const uncovered = ALL_PAGES.filter(p => !existingRows.find(r => r.path === p.path))
 
   async function runBatch() {
-    if (!apiKey) { toast.error('Add Anthropic API key in Settings first'); return }
     if (uncovered.length === 0) { toast.success('All pages already have meta overrides!'); return }
     setLoading(true)
     setProgress([])
@@ -524,7 +506,7 @@ Return ONLY a JSON object:
   "og_description": "Social share description 2-3 sentences"
 }`
       try {
-        const result = await claudeJSON<{ title: string; description: string; og_title: string; og_description: string }>(apiKey, prompt, 500)
+        const result = await callAIJSON<{ title: string; description: string; og_title: string; og_description: string }>(prompt, { maxTokens: 500 })
         if (result) {
           await supabase.from('seo_pages').upsert([{
             path: page.path,
@@ -613,7 +595,6 @@ export default function SEOManager() {
   const [activeTab, setActiveTab] = useState<'pages' | 'ai-studio' | 'sitemap' | 'robots'>('pages')
   const [aiStudioTab, setAiStudioTab] = useState<'keywords' | 'brief' | 'faq' | 'batch'>('keywords')
   const [generatingField, setGeneratingField] = useState<string | null>(null)
-  const [apiKey] = useState(() => localStorage.getItem('anthropic_api_key') || '')
 
   async function load() {
     setLoading(true)
@@ -675,7 +656,6 @@ export default function SEOManager() {
 
   // AI fill functions
   async function aiGenerateMeta() {
-    if (!apiKey) { toast.error('Add Anthropic API key in Settings first'); return }
     if (!form.path) { toast.error('Select a page first'); return }
     const pageInfo = ALL_PAGES.find(p => p.path === form.path)
     setGeneratingField('meta')
@@ -690,24 +670,27 @@ Return ONLY a JSON object:
   "og_title": "Social share title",
   "og_description": "Social share description 2-3 sentences"
 }`
-    const result = await claudeJSON<{ title: string; description: string; og_title: string; og_description: string }>(apiKey, prompt, 600)
-    if (result) {
-      setForm(f => ({
-        ...f,
-        title: result.title || f.title,
-        description: result.description || f.description,
-        og_title: result.og_title || f.og_title,
-        og_description: result.og_description || f.og_description,
-      }))
-      toast.success('Meta tags generated')
-    } else {
+    try {
+      const result = await callAIJSON<{ title: string; description: string; og_title: string; og_description: string }>(prompt, { maxTokens: 600 })
+      if (result) {
+        setForm(f => ({
+          ...f,
+          title: result.title || f.title,
+          description: result.description || f.description,
+          og_title: result.og_title || f.og_title,
+          og_description: result.og_description || f.og_description,
+        }))
+        toast.success('Meta tags generated')
+      } else {
+        toast.error('Failed to generate meta tags')
+      }
+    } catch {
       toast.error('Failed to generate meta tags')
     }
     setGeneratingField(null)
   }
 
   async function aiGenerateSchema() {
-    if (!apiKey) { toast.error('Add Anthropic API key in Settings first'); return }
     if (!form.path) { toast.error('Select a page first'); return }
     const pageInfo = ALL_PAGES.find(p => p.path === form.path)
     setGeneratingField('schema')
@@ -718,17 +701,21 @@ Description: ${form.description}
 
 Choose the most appropriate schema type (WebPage, Service, VideoObject, FAQPage, Organization, etc.)
 Return ONLY valid JSON-LD. No markdown, no explanation.`
-    const text = await callClaude(apiKey, prompt, 1000)
-    const match = text.match(/\{[\s\S]*\}/m)
-    if (match) {
-      try {
-        JSON.parse(match[0]) // validate
-        setStructuredRaw(JSON.stringify(JSON.parse(match[0]), null, 2))
-        toast.success('JSON-LD schema generated')
-      } catch {
-        toast.error('Generated schema has invalid JSON')
+    try {
+      const text = await callAIText(prompt, { maxTokens: 1000 })
+      const match = text.match(/\{[\s\S]*\}/m)
+      if (match) {
+        try {
+          JSON.parse(match[0]) // validate
+          setStructuredRaw(JSON.stringify(JSON.parse(match[0]), null, 2))
+          toast.success('JSON-LD schema generated')
+        } catch {
+          toast.error('Generated schema has invalid JSON')
+        }
+      } else {
+        toast.error('Failed to generate schema')
       }
-    } else {
+    } catch {
       toast.error('Failed to generate schema')
     }
     setGeneratingField(null)
@@ -924,15 +911,6 @@ Return ONLY valid JSON-LD. No markdown, no explanation.`
       {/* ── AI STUDIO TAB ── */}
       {activeTab === 'ai-studio' && (
         <div>
-          {!apiKey && (
-            <div className="border border-amber-500/20 bg-amber-500/5 rounded-lg p-4 mb-6 flex items-start gap-3">
-              <AlertCircle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-amber-400">
-                AI Studio requires an Anthropic API key. Add it in <strong>CRM → Settings</strong>.
-              </p>
-            </div>
-          )}
-
           {/* AI Studio sub-tabs */}
           <div className="flex gap-1 mb-6 border-b border-border/50">
             {([
@@ -955,10 +933,10 @@ Return ONLY valid JSON-LD. No markdown, no explanation.`
             ))}
           </div>
 
-          {aiStudioTab === 'keywords' && <AIKeywordResearch apiKey={apiKey} />}
-          {aiStudioTab === 'brief'    && <AIContentBrief apiKey={apiKey} />}
-          {aiStudioTab === 'faq'      && <AIFAQGenerator apiKey={apiKey} />}
-          {aiStudioTab === 'batch'    && <AIBatchOptimizer apiKey={apiKey} existingRows={rows} onRefresh={load} />}
+          {aiStudioTab === 'keywords' && <AIKeywordResearch />}
+          {aiStudioTab === 'brief'    && <AIContentBrief />}
+          {aiStudioTab === 'faq'      && <AIFAQGenerator />}
+          {aiStudioTab === 'batch'    && <AIBatchOptimizer existingRows={rows} onRefresh={load} />}
         </div>
       )}
 

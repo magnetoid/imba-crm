@@ -1,4 +1,5 @@
 import { useEditor, EditorContent } from '@tiptap/react'
+import type { Extensions } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import Collaboration from '@tiptap/extension-collaboration'
 import CollaborationCaret from '@tiptap/extension-collaboration-caret'
@@ -75,15 +76,16 @@ export default function TiptapEditor({
   const seedingRef = useRef(false)
 
   const collabEnabled = !!collaboration?.enabled
-  const ydoc = useMemo(() => (collabEnabled ? new Y.Doc() : null), [collabEnabled, collaboration?.docName])
+  const collabDocName = collaboration?.docName
+  const ydoc = useMemo(() => (collabEnabled ? new Y.Doc() : null), [collabEnabled])
   const wsUrl = useMemo(() => (collaboration?.wsUrl || (typeof window !== 'undefined' ? defaultWsUrl() : '')), [collaboration?.wsUrl])
   const provider = useMemo(() => {
-    if (!collabEnabled || !ydoc) return null
-    return new WebsocketProvider(wsUrl, collaboration!.docName, ydoc)
-  }, [collabEnabled, wsUrl, collaboration?.docName, ydoc])
+    if (!collabEnabled || !ydoc || !collabDocName) return null
+    return new WebsocketProvider(wsUrl, collabDocName, ydoc)
+  }, [collabEnabled, wsUrl, collabDocName, ydoc])
 
   const extensions = useMemo(() => {
-    const ext: any[] = [
+    const ext: Extensions = [
       StarterKit,
       Underline,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),

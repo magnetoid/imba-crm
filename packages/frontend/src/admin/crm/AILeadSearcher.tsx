@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { buildCompanyContext, callAIJSON, getCRMRuntimeSettings } from '@/lib/ai'
 import { Button } from '@/components/ui/button'
@@ -10,6 +10,7 @@ import { Separator } from '@/components/ui/separator'
 import toast from 'react-hot-toast'
 import { Search, Sparkles, Loader2, Building2, Mail, Globe, Phone, CheckCircle2, Plus, Download, Star, Target, History } from 'lucide-react'
 import { autoScoreLead, logActivity } from './crm-utils'
+import { logGeneration } from '@/lib/aiGenerations'
 
 interface DiscoveredLead {
   company_name: string
@@ -35,21 +36,21 @@ export default function AILeadSearcher() {
   const [searchHistory, setSearchHistory] = useState<{ label: string; count: number; date: string }[]>([])
   const [criteria, setCriteria] = useState({ industry: '', location: '', size: '', videoGoal: '', keywords: '', count: '10' })
 
-  useEffect(() => { void loadHistory() }, [])
-
-  async function loadHistory() {
+  const loadHistory = useCallback(async () => {
     const { data } = await supabase.from('crm_ai_settings').select('value').eq('key', 'lead_search_history').maybeSingle()
     if (data?.value) setSearchHistory((data.value as { searches: typeof searchHistory }).searches || [])
-  }
+  }, [])
+
+  useEffect(() => { void loadHistory() }, [loadHistory])
 
   async function search() {
     if (!criteria.industry) return toast.error('Select an industry.')
     setLoading(true)
     setResults([])
     setImported(new Set())
+    const runtime = await getCRMRuntimeSettings()
+    const prompt = `You are a B2B lead researcher for Imba Production.\n${buildCompanyContext(runtime)}\n\nGenerate ${criteria.count} realistic internal prospecting leads. Prefer plausible targets with clear reasons they may need premium video production.\n\nCriteria:\n- Industry: ${criteria.industry}\n- Location: ${criteria.location || 'Global / US / Europe'}\n- Company size: ${criteria.size || 'Any'}\n- Video goal: ${criteria.videoGoal || 'Brand awareness'}\n- Keywords: ${criteria.keywords || 'growth-stage, digital-first'}\n\nReturn ONLY valid JSON array:\n[{"company_name":"string","contact_name":"string","email":"string","phone":"string","website":"string","industry":"string","company_size":"string","ai_score":75,"ai_summary":"string"}]`
     try {
-      const runtime = await getCRMRuntimeSettings()
-      const prompt = `You are a B2B lead researcher for Imba Production.\n${buildCompanyContext(runtime)}\n\nGenerate ${criteria.count} realistic internal prospecting leads. Prefer plausible targets with clear reasons they may need premium video production.\n\nCriteria:\n- Industry: ${criteria.industry}\n- Location: ${criteria.location || 'Global / US / Europe'}\n- Company size: ${criteria.size || 'Any'}\n- Video goal: ${criteria.videoGoal || 'Brand awareness'}\n- Keywords: ${criteria.keywords || 'growth-stage, digital-first'}\n\nReturn ONLY valid JSON array:\n[{"company_name":"string","contact_name":"string","email":"string","phone":"string","website":"string","industry":"string","company_size":"string","ai_score":75,"ai_summary":"string"}]`
       const leads = await callAIJSON<DiscoveredLead[]>(prompt, { maxTokens: 1800 })
       setResults(leads)
       const label = `${criteria.industry} · ${criteria.location || 'Global'}`
@@ -57,8 +58,24 @@ export default function AILeadSearcher() {
       const next = [entry, ...searchHistory].slice(0, 8)
       setSearchHistory(next)
       await supabase.from('crm_ai_settings').upsert({ key: 'lead_search_history', value: { searches: next } })
+      void logGeneration({
+        feature: 'lead_search',
+        taskType: 'research',
+        input: prompt,
+        output: JSON.stringify(leads),
+        inputMeta: { criteria },
+        provider: runtime.active_ai_provider,
+        model: runtime.active_ai_model,
+      })
       toast.success(`Found ${leads.length} leads`)
     } catch (error) {
+      void logGeneration({
+        feature: 'lead_search',
+        taskType: 'research',
+        input: prompt,
+        error: error instanceof Error ? error.message : String(error),
+        inputMeta: { criteria },
+      })
       toast.error(error instanceof Error ? error.message : 'AI search failed')
     }
     setLoading(false)

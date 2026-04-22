@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
-import { callAIJSON } from '@/lib/ai'
+import { callAIJSON, getCRMRuntimeSettings } from '@/lib/ai'
+import { logGeneration } from '@/lib/aiGenerations'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import toast from 'react-hot-toast'
@@ -102,12 +103,30 @@ Email Outreach:
 
 Return ONLY a valid JSON array of 5 insight strings.`
     try {
+      const runtime = await getCRMRuntimeSettings()
       const arr = await callAIJSON<string[]>(prompt, { maxTokens: 800 })
       setInsights(arr)
       const today = new Date().toISOString().split('T')[0]
       await supabase.from('crm_analytics_snapshots').upsert({ snapshot_date: today, total_leads: stats.totalLeads, qualified_leads: stats.qualifiedLeads, emails_sent: stats.sentEmails, emails_opened: stats.openedEmails, emails_replied: stats.repliedEmails, ai_insights: arr })
+      void logGeneration({
+        feature: 'analytics_insights',
+        taskType: 'reasoning',
+        input: prompt,
+        output: JSON.stringify(arr),
+        inputMeta: { snapshot_date: today, stats },
+        provider: runtime.active_ai_provider,
+        model: runtime.active_ai_model,
+      })
       toast.success('Insights generated')
-    } catch (error) { toast.error(error instanceof Error ? error.message : 'Failed to generate insights') }
+    } catch (error) {
+      void logGeneration({
+        feature: 'analytics_insights',
+        taskType: 'reasoning',
+        input: prompt,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      toast.error(error instanceof Error ? error.message : 'Failed to generate insights')
+    }
     setGeneratingInsights(false)
   }
 

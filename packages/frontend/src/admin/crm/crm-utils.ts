@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import { buildCompanyContext, callAIJSON, getCRMRuntimeSettings } from '@/lib/ai'
+import { logGeneration } from '@/lib/aiGenerations'
 
 // ─────────────────────────────────────────────────────────
 // Template interpolation — replaces {{placeholders}} with lead data
@@ -70,9 +71,8 @@ interface LeadForScoring {
 }
 
 export async function autoScoreLead(lead: LeadForScoring): Promise<{ score: number; notes: string } | null> {
-  try {
-    const runtime = await getCRMRuntimeSettings()
-    const prompt = `You are a B2B sales expert. Score this lead 0-100 and give a concise follow-up recommendation.
+  const runtime = await getCRMRuntimeSettings()
+  const prompt = `You are a B2B sales expert. Score this lead 0-100 and give a concise follow-up recommendation.
 ${buildCompanyContext(runtime)}
 
 Lead:
@@ -85,15 +85,32 @@ Lead:
 
 Return ONLY JSON: {"score": NUMBER, "notes": "2 sentence recommendation"}`
 
+  try {
     const parsed = await callAIJSON<{ score: number; notes: string }>(prompt, { maxTokens: 400 })
     await supabase.from('crm_leads').update({
       ai_score: parsed.score,
       ai_notes: parsed.notes,
       last_ai_scored_at: new Date().toISOString(),
     }).eq('id', lead.id)
+    void logGeneration({
+      feature: 'lead_score',
+      taskType: 'classification',
+      leadId: lead.id,
+      input: prompt,
+      output: JSON.stringify(parsed),
+      provider: runtime.active_ai_provider,
+      model: runtime.active_ai_model,
+    })
     return parsed
   } catch (e) {
     console.warn('Auto-scoring failed:', e)
+    void logGeneration({
+      feature: 'lead_score',
+      taskType: 'classification',
+      leadId: lead.id,
+      input: prompt,
+      error: e instanceof Error ? e.message : String(e),
+    })
     return null
   }
 }
@@ -108,11 +125,14 @@ interface EnrichmentResult {
   ai_summary: string
 }
 
-export async function enrichLeadFromWebsite(website: string, company?: string): Promise<EnrichmentResult | null> {
+export async function enrichLeadFromWebsite(
+  website: string,
+  company?: string,
+  leadId?: string,
+): Promise<EnrichmentResult | null> {
   if (!website) return null
-  try {
-    const runtime = await getCRMRuntimeSettings()
-    const prompt = `You are a B2B research assistant. Based on the company name and website URL below, infer the most likely business details.
+  const runtime = await getCRMRuntimeSettings()
+  const prompt = `You are a B2B research assistant. Based on the company name and website URL below, infer the most likely business details.
 ${buildCompanyContext(runtime)}
 
 Company: ${company || 'Unknown'}
@@ -125,10 +145,28 @@ Return ONLY valid JSON with your best inference:
   "likely_needs": "what kind of video production they probably need and why",
   "ai_summary": "2-3 sentence opportunity summary for a video production agency"
 }`
-
-    return await callAIJSON<EnrichmentResult>(prompt, { maxTokens: 600 })
+  try {
+    const result = await callAIJSON<EnrichmentResult>(prompt, { maxTokens: 600 })
+    void logGeneration({
+      feature: 'lead_enrich',
+      taskType: 'extraction',
+      leadId: leadId ?? null,
+      input: prompt,
+      output: JSON.stringify(result),
+      inputMeta: { website, company: company ?? null },
+      provider: runtime.active_ai_provider,
+      model: runtime.active_ai_model,
+    })
+    return result
   } catch (e) {
     console.warn('Enrichment failed:', e)
+    void logGeneration({
+      feature: 'lead_enrich',
+      taskType: 'extraction',
+      leadId: leadId ?? null,
+      input: prompt,
+      error: e instanceof Error ? e.message : String(e),
+    })
     return null
   }
 }

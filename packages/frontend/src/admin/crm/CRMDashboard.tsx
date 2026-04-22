@@ -14,6 +14,7 @@ import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-p
 import { Plus, Loader2, Sparkles, Users, TrendingUp, DollarSign, Target, ArrowRight, Import, Trophy, ChevronRight, ChevronLeft, Bell, GripVertical } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { autoScoreLead, logActivity, requestNotificationPermission, showNotification } from './crm-utils'
+import { logGeneration } from '@/lib/aiGenerations'
 
 export interface CRMLead {
   id: string
@@ -210,9 +211,8 @@ export default function CRMDashboard() {
 
   async function scoreWithAI(lead: CRMLead) {
     setScoringId(lead.id)
-    try {
-      const runtime = await getCRMRuntimeSettings()
-      const parsed = await callAIJSON<{ score: number; notes: string }>(`You are a B2B sales expert for Imba Production.
+    const runtime = await getCRMRuntimeSettings()
+    const prompt = `You are a B2B sales expert for Imba Production.
 ${buildCompanyContext(runtime)}
 
 Score this lead from 0-100 and give a brief follow-up recommendation.
@@ -223,15 +223,33 @@ Score this lead from 0-100 and give a brief follow-up recommendation.
 - Notes: ${lead.notes || 'None'}
 - Stage: ${lead.stage}
 
-Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recommendation"}`, { maxTokens: 512 })
+Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recommendation"}`
+    try {
+      const parsed = await callAIJSON<{ score: number; notes: string }>(prompt, { maxTokens: 512 })
       await supabase.from('crm_leads').update({
         ai_score: parsed.score,
         ai_notes: parsed.notes,
         last_ai_scored_at: new Date().toISOString(),
       }).eq('id', lead.id)
       setLeads(l => l.map(x => x.id === lead.id ? { ...x, ai_score: parsed.score, ai_notes: parsed.notes } : x))
-    } catch (_) {
-      // silent fail
+      void logGeneration({
+        feature: 'lead_score',
+        taskType: 'classification',
+        leadId: lead.id,
+        input: prompt,
+        output: JSON.stringify(parsed),
+        inputMeta: { source: 'CRMDashboard.scoreWithAI' },
+        provider: runtime.active_ai_provider,
+        model: runtime.active_ai_model,
+      })
+    } catch (error) {
+      void logGeneration({
+        feature: 'lead_score',
+        taskType: 'classification',
+        leadId: lead.id,
+        input: prompt,
+        error: error instanceof Error ? error.message : String(error),
+      })
     }
     setScoringId(null)
   }

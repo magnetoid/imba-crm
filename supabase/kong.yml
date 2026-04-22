@@ -1,0 +1,60 @@
+_format_version: "2.1"
+
+services:
+  - name: rest
+    url: http://supabase-rest:3000
+    routes:
+      - name: rest
+        paths:
+          - /rest/v1
+        strip_path: true
+  - name: auth
+    url: http://supabase-auth:9999
+    routes:
+      - name: auth
+        paths:
+          - /auth/v1
+        strip_path: true
+  - name: storage
+    url: http://supabase-storage:5000
+    routes:
+      - name: storage
+        paths:
+          - /storage/v1
+        strip_path: true
+  - name: meta
+    url: http://supabase-meta:8080
+    routes:
+      - name: meta
+        paths:
+          - /pg
+        strip_path: true
+
+plugins:
+  - name: cors
+    config:
+      origins:
+        - '*'
+      methods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - OPTIONS
+      headers:
+        - Accept
+        - Accept-Version
+        - Content-Length
+        - Content-MD5
+        - Content-Type
+        - Date
+        - Authorization
+        - apiKey
+        - Prefer
+        - Range
+      exposed_headers:
+        - Content-Range
+        - Content-Length
+      credentials: true
+      max_age: 3600

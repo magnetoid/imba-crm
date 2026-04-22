@@ -23,6 +23,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Plus, Pencil, Trash2, Loader2, FileText, Sparkles, X } from 'lucide-react'
 import TiptapEditor from './TiptapEditor'
+import { callAIText } from '@/lib/ai'
 import { EDITOR_PRESETS } from './editorPresets'
 
 const EMPTY_FORM = {
@@ -69,7 +70,6 @@ export default function BlogAdmin() {
   // AI Generator state
   const [aiOpen, setAiOpen] = useState(false)
   const [aiPrompt, setAiPrompt] = useState('')
-  const [aiKey, setAiKey] = useState(() => localStorage.getItem('anthropic_api_key') || '')
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
   const tagInputRef = useRef<HTMLInputElement>(null)
@@ -205,34 +205,11 @@ export default function BlogAdmin() {
 
   async function handleAiGenerate() {
     if (!aiPrompt.trim()) { setAiError('Please enter a topic/brief.'); return }
-    if (!aiKey.trim()) { setAiError('Please enter your Anthropic API key.'); return }
-    localStorage.setItem('anthropic_api_key', aiKey)
     setAiLoading(true)
     setAiError('')
     try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': aiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-          'anthropic-dangerous-allow-browser': 'true',
-        },
-        body: JSON.stringify({
-          model: 'claude-opus-4-6',
-          max_tokens: 4096,
-          messages: [{
-            role: 'user',
-            content: `Generate a comprehensive blog post for a video production company (Imba Production) about: ${aiPrompt}. Return ONLY valid JSON (no markdown code blocks) with: title, slug, excerpt (2 sentences), body (markdown, 800+ words), category (one of: AI Video, Video Production, Brand Film, Social Media, Drone, Post Production, eCommerce), tags (array of strings), read_time_minutes, seo_title, seo_description`,
-          }],
-        }),
-      })
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}))
-        throw new Error((errData as { error?: { message?: string } }).error?.message || `HTTP ${res.status}`)
-      }
-      const data = await res.json() as { content: Array<{ text: string }> }
-      const text = data.content[0]?.text || ''
+      const text = await callAIText(`Generate a comprehensive blog post for a video production company (Imba Production) about: ${aiPrompt}. Return ONLY valid JSON (no markdown code blocks) with: title, slug, excerpt (2 sentences), body (markdown, 800+ words), category (one of: AI Video, Video Production, Brand Film, Social Media, Drone, Post Production, eCommerce), tags (array of strings), read_time_minutes, seo_title, seo_description`)
+      
       let parsed: {
         title?: string
         slug?: string
@@ -607,17 +584,6 @@ export default function BlogAdmin() {
                 onChange={e => setAiPrompt(e.target.value)}
                 placeholder="e.g. How AI video is revolutionising ecommerce product pages in 2026"
               />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="ai-key">Anthropic API key</Label>
-              <Input
-                id="ai-key"
-                type="password"
-                value={aiKey}
-                onChange={e => setAiKey(e.target.value)}
-                placeholder="sk-ant-..."
-              />
-              <p className="text-xs text-muted-foreground">Stored locally in your browser. Never sent to our servers.</p>
             </div>
             {aiError && <p className="text-destructive text-sm">{aiError}</p>}
           </div>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { callAIJSON, getCRMRuntimeSettings } from '@/lib/ai'
+import { logGeneration } from '@/lib/aiGenerations'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -79,12 +80,32 @@ Body: ${msg.body}
 
 Return ONLY valid JSON: {"sentiment":"positive|neutral|negative","category":"question|objection|meeting_request|bounce","suggested_reply":"string"}`
     try {
+      const runtime = await getCRMRuntimeSettings()
       const json = await callAIJSON<{ sentiment: string; category: string; suggested_reply: string }>(prompt, { maxTokens: 500 })
       await supabase.from('crm_inbox_messages').update({ ai_sentiment: json.sentiment, ai_category: json.category, ai_suggested_reply: json.suggested_reply, status: 'read' }).eq('id', msg.id)
       setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, ai_sentiment: json.sentiment, ai_category: json.category, ai_suggested_reply: json.suggested_reply, status: 'read' } : m))
       if (selected?.id === msg.id) setSelected(p => p ? { ...p, ai_sentiment: json.sentiment, ai_category: json.category, ai_suggested_reply: json.suggested_reply, status: 'read' } : p)
+      void logGeneration({
+        feature: 'inbox_analyze',
+        taskType: 'classification',
+        leadId: msg.lead_id,
+        input: prompt,
+        output: JSON.stringify(json),
+        inputMeta: { message_id: msg.id, direction: msg.direction },
+        provider: runtime.active_ai_provider,
+        model: runtime.active_ai_model,
+      })
       toast.success('Message analyzed')
-    } catch (error) { toast.error(error instanceof Error ? error.message : 'Analysis failed') }
+    } catch (error) {
+      void logGeneration({
+        feature: 'inbox_analyze',
+        taskType: 'classification',
+        leadId: msg.lead_id,
+        input: prompt,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      toast.error(error instanceof Error ? error.message : 'Analysis failed')
+    }
     setAnalyzing(null)
   }
 

@@ -12,17 +12,42 @@ import { Separator } from '@/components/ui/separator'
 import toast from 'react-hot-toast'
 import { Mail, Sparkles, Loader2, Send, CheckCircle2, Plus, Pencil, Trash2, Eye, RefreshCw, Filter, Building2, Copy, Check, FileCode } from 'lucide-react'
 import { logActivity, interpolateTemplate, incrementTemplateUseCount } from './crm-utils'
+import { logGeneration, markApproved, markEdited, markRejected, markSent } from '@/lib/aiGenerations'
 
 interface CRMLead { id: string; name: string; company: string; email: string; service_interest: string; ai_score: number; ai_notes: string }
-interface OutreachEmail { id: string; lead_id: string; subject: string; body: string; status: string; ai_generated: boolean; sent_at: string | null; created_at: string; crm_leads?: { id: string; name: string; company: string; email: string } | null }
+interface OutreachEmail { id: string; lead_id: string; subject: string; body: string; status: string; ai_generated: boolean; ai_generation_id?: string | null; sent_at: string | null; created_at: string; crm_leads?: { id: string; name: string; company: string; email: string } | null }
 interface Template { id: string; type: string; name: string; subject: string | null; content: string }
 const STATUS_META: Record<string, { label: string; color: string }> = { draft: { label: 'Draft', color: 'text-muted-foreground' }, approved: { label: 'Approved', color: 'text-blue-400' }, queued: { label: 'Queued', color: 'text-amber-400' }, sent: { label: 'Sent', color: 'text-emerald-400' }, bounced: { label: 'Bounced', color: 'text-red-400' }, opened: { label: 'Opened', color: 'text-cyan-400' }, replied: { label: 'Replied', color: 'text-purple-400' } }
 
-async function generateEmailWithAI(lead: CRMLead) {
+async function generateEmailWithAI(lead: CRMLead): Promise<{ email: { subject: string; body: string }; generationId: string | null; prompt: string }> {
   const runtime = await getCRMRuntimeSettings()
   const calendarInstruction = runtime.scheduling_url ? `Include a CTA to book here: ${runtime.scheduling_url}` : 'CTA should ask for a short reply or 15-minute call.'
   const prompt = `Write a personalized cold outreach email for Imba Production.\n${buildCompanyContext(runtime)}\n\nLead:\n- Contact: ${lead.name}\n- Company: ${lead.company || 'Unknown'}\n- Email: ${lead.email || 'Unknown'}\n- Interest: ${lead.service_interest || 'Video production'}\n- AI notes: ${lead.ai_notes || 'None'}\n- Desired tone: ${runtime.ai_outreach_tone}\n\nRequirements:\n- Professional but human\n- Non-generic subject line\n- Mention a concrete pain point or opportunity\n- Mention one plausible result Imba could help drive\n- Max 120 words body\n- ${calendarInstruction}\n\nReturn ONLY valid JSON: {"subject":"string","body":"string"}`
-  return callAIJSON<{ subject: string; body: string }>(prompt, { maxTokens: 700 })
+  try {
+    const email = await callAIJSON<{ subject: string; body: string }>(prompt, { maxTokens: 700 })
+    const generationId = await logGeneration({
+      feature: 'outreach_email',
+      taskType: 'drafting',
+      leadId: lead.id,
+      input: prompt,
+      inputMeta: { tone: runtime.ai_outreach_tone, provider: runtime.active_ai_provider, model: runtime.active_ai_model },
+      output: JSON.stringify(email),
+      status: 'draft',
+      provider: runtime.active_ai_provider,
+      model: runtime.active_ai_model,
+    })
+    return { email, generationId, prompt }
+  } catch (error) {
+    await logGeneration({
+      feature: 'outreach_email',
+      taskType: 'drafting',
+      leadId: lead.id,
+      input: prompt,
+      error: error instanceof Error ? error.message : String(error),
+      status: 'rejected',
+    })
+    throw error
+  }
 }
 
 export default function AIOutreach() {
@@ -60,8 +85,15 @@ export default function AIOutreach() {
   async function generateEmail(lead: CRMLead) {
     setGenerating(lead.id)
     try {
-      const email = await generateEmailWithAI(lead)
-      await supabase.from('crm_outreach_emails').insert({ lead_id: lead.id, subject: email.subject, body: email.body, status: 'draft', ai_generated: true })
+      const { email, generationId } = await generateEmailWithAI(lead)
+      await supabase.from('crm_outreach_emails').insert({
+        lead_id: lead.id,
+        subject: email.subject,
+        body: email.body,
+        status: 'draft',
+        ai_generated: true,
+        ai_generation_id: generationId,
+      })
       toast.success('Email draft created')
       await load()
     } catch (error) {
@@ -70,7 +102,15 @@ export default function AIOutreach() {
     setGenerating(null)
   }
 
-  async function approveEmail(id: string) { await supabase.from('crm_outreach_emails').update({ status: 'approved' }).eq('id', id); setEmails(prev => prev.map(e => e.id === id ? { ...e, status: 'approved' } : e)); toast.success('Email approved') }
+  async function approveEmail(id: string) {
+    await supabase.from('crm_outreach_emails').update({ status: 'approved' }).eq('id', id)
+    const email = emails.find(e => e.id === id)
+    if (email?.ai_generation_id) {
+      await markApproved(email.ai_generation_id, `Subject: ${email.subject}\n\n${email.body}`)
+    }
+    setEmails(prev => prev.map(e => e.id === id ? { ...e, status: 'approved' } : e))
+    toast.success('Email approved')
+  }
 
   async function sendEmail(email: OutreachEmail) {
     setSendingId(email.id)
@@ -79,6 +119,7 @@ export default function AIOutreach() {
     const { error } = await supabase.functions.invoke('send-email', { body: { to: toEmail, to_name: email.crm_leads?.name, subject: email.subject, body: email.body } })
     if (!error) {
       await supabase.from('crm_outreach_emails').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', email.id)
+      await markSent(email.ai_generation_id)
       logActivity(email.lead_id, 'email', `Sent: ${email.subject}`, email.body.slice(0, 200))
       toast.success('Email sent')
       await load()
@@ -93,8 +134,27 @@ export default function AIOutreach() {
     setSendingId(null)
   }
 
-  async function deleteEmail(id: string) { if (!confirm('Delete this email?')) return; await supabase.from('crm_outreach_emails').delete().eq('id', id); setEmails(prev => prev.filter(e => e.id !== id)); toast.success('Deleted') }
-  async function saveEdit() { if (!editDialog) return; setComposeSaving(true); await supabase.from('crm_outreach_emails').update({ subject: editDialog.subject, body: editDialog.body, status: 'draft' }).eq('id', editDialog.id); setEditDialog(null); setComposeSaving(false); toast.success('Saved as draft'); await load() }
+  async function deleteEmail(id: string) {
+    if (!confirm('Delete this email?')) return
+    const email = emails.find(e => e.id === id)
+    await supabase.from('crm_outreach_emails').delete().eq('id', id)
+    await markRejected(email?.ai_generation_id, 'email deleted')
+    setEmails(prev => prev.filter(e => e.id !== id))
+    toast.success('Deleted')
+  }
+  async function saveEdit() {
+    if (!editDialog) return
+    setComposeSaving(true)
+    await supabase.from('crm_outreach_emails').update({ subject: editDialog.subject, body: editDialog.body, status: 'draft' }).eq('id', editDialog.id)
+    // Track the human edit against the source generation so the diff is preserved.
+    if (editDialog.ai_generation_id) {
+      await markEdited(editDialog.ai_generation_id, `Subject: ${editDialog.subject}\n\n${editDialog.body}`)
+    }
+    setEditDialog(null)
+    setComposeSaving(false)
+    toast.success('Saved as draft')
+    await load()
+  }
   async function saveCompose() { if (!composeLead || !composeSubject || !composeBody) return; setComposeSaving(true); await supabase.from('crm_outreach_emails').insert({ lead_id: composeLead, subject: composeSubject, body: composeBody, status: 'draft', ai_generated: false }); setComposeDialog(false); setComposeLead(''); setComposeSubject(''); setComposeBody(''); setSelectedTemplate(''); setComposeSaving(false); toast.success('Draft saved'); await load() }
 
   function applyTemplate(templateId: string) {

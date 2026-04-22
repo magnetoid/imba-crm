@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator'
 import { ArrowLeft, Loader2, Sparkles, Plus, Trash2, Mail, Phone, Globe, Building, Check, Copy, FileText, Calendar, Zap } from 'lucide-react'
 import { enrichLeadFromWebsite, logActivity } from './crm-utils'
+import { logGeneration } from '@/lib/aiGenerations'
 import toast from 'react-hot-toast'
 import { STAGES } from './CRMDashboard'
 import type { CRMLead } from './CRMDashboard'
@@ -112,9 +113,8 @@ export default function LeadDetail() {
     if (!lead) return
     setAiLoading(true)
     setAiTemplate('')
-    try {
-      const runtime = await getCRMRuntimeSettings()
-      const text = await callAIText(`Write a short, warm, professional follow-up email for Imba Production.
+    const runtime = await getCRMRuntimeSettings()
+    const prompt = `Write a short, warm, professional follow-up email for Imba Production.
 ${buildCompanyContext(runtime)}
 
 Lead info:
@@ -127,9 +127,29 @@ Lead info:
 - AI score: ${lead.ai_score ?? 'not scored'}
 - AI notes: ${lead.ai_notes || 'none'}
 
-Write a natural follow-up email. Subject line first, then body. Keep it under 150 words.`, { maxTokens: 600 })
+Write a natural follow-up email. Subject line first, then body. Keep it under 150 words.`
+    try {
+      const text = await callAIText(prompt, { maxTokens: 600 })
       setAiTemplate(text)
+      void logGeneration({
+        feature: 'outreach_email',
+        taskType: 'drafting',
+        leadId: lead.id,
+        input: prompt,
+        output: text,
+        status: 'draft',
+        inputMeta: { source: 'LeadDetail.generateEmailTemplate' },
+        provider: runtime.active_ai_provider,
+        model: runtime.active_ai_model,
+      })
     } catch (error) {
+      void logGeneration({
+        feature: 'outreach_email',
+        taskType: 'drafting',
+        leadId: lead.id,
+        input: prompt,
+        error: error instanceof Error ? error.message : String(error),
+      })
       toast.error(error instanceof Error ? error.message : 'Failed to generate email')
       setAiTemplate('Failed to generate email.')
     }
@@ -140,9 +160,8 @@ Write a natural follow-up email. Subject line first, then body. Keep it under 15
     if (!lead) return
     setAiLoading(true)
     setAiProposal('')
-    try {
-      const runtime = await getCRMRuntimeSettings()
-      const text = await callAIText(`Create a concise video production proposal outline for Imba Production.
+    const runtime = await getCRMRuntimeSettings()
+    const prompt = `Create a concise video production proposal outline for Imba Production.
 ${buildCompanyContext(runtime)}
 
 Client info:
@@ -153,9 +172,29 @@ Client info:
 - Notes: ${lead.notes || 'none'}
 - Stage: ${lead.stage}
 
-Format as a proposal outline with sections: Executive Summary, Project Scope, Deliverables, Timeline, Investment, and Next Steps. Keep each section brief.`, { maxTokens: 900 })
+Format as a proposal outline with sections: Executive Summary, Project Scope, Deliverables, Timeline, Investment, and Next Steps. Keep each section brief.`
+    try {
+      const text = await callAIText(prompt, { maxTokens: 900 })
       setAiProposal(text)
+      void logGeneration({
+        feature: 'proposal',
+        taskType: 'drafting',
+        leadId: lead.id,
+        input: prompt,
+        output: text,
+        status: 'draft',
+        inputMeta: { source: 'LeadDetail.generateProposal' },
+        provider: runtime.active_ai_provider,
+        model: runtime.active_ai_model,
+      })
     } catch (error) {
+      void logGeneration({
+        feature: 'proposal',
+        taskType: 'drafting',
+        leadId: lead.id,
+        input: prompt,
+        error: error instanceof Error ? error.message : String(error),
+      })
       toast.error(error instanceof Error ? error.message : 'Failed to generate proposal')
       setAiProposal('Failed to generate proposal.')
     }
@@ -165,17 +204,35 @@ Format as a proposal outline with sections: Executive Summary, Project Scope, De
   async function scoreWithAI() {
     if (!lead) return
     setAiLoading(true)
-    try {
-      const runtime = await getCRMRuntimeSettings()
-      const parsed = await callAIJSON<{ score: number; notes: string }>(`Score this lead for Imba Production from 0-100 and give a concise follow-up recommendation.
+    const runtime = await getCRMRuntimeSettings()
+    const prompt = `Score this lead for Imba Production from 0-100 and give a concise follow-up recommendation.
 ${buildCompanyContext(runtime)}
 
 Lead: ${lead.name}, ${lead.company || 'no company'}, ${lead.service_interest || 'unknown service'}, budget: ${lead.budget_range || 'unknown'}, stage: ${lead.stage}, notes: ${lead.notes || 'none'}
 
-Return ONLY valid JSON: {"score": NUMBER, "notes": "recommendation"}`, { maxTokens: 400 })
+Return ONLY valid JSON: {"score": NUMBER, "notes": "recommendation"}`
+    try {
+      const parsed = await callAIJSON<{ score: number; notes: string }>(prompt, { maxTokens: 400 })
       await supabase.from('crm_leads').update({ ai_score: parsed.score, ai_notes: parsed.notes, last_ai_scored_at: new Date().toISOString() }).eq('id', lead.id)
       setLead(l => l ? { ...l, ai_score: parsed.score, ai_notes: parsed.notes } : l)
+      void logGeneration({
+        feature: 'lead_score',
+        taskType: 'classification',
+        leadId: lead.id,
+        input: prompt,
+        output: JSON.stringify(parsed),
+        inputMeta: { source: 'LeadDetail.scoreWithAI' },
+        provider: runtime.active_ai_provider,
+        model: runtime.active_ai_model,
+      })
     } catch (error) {
+      void logGeneration({
+        feature: 'lead_score',
+        taskType: 'classification',
+        leadId: lead.id,
+        input: prompt,
+        error: error instanceof Error ? error.message : String(error),
+      })
       toast.error(error instanceof Error ? error.message : 'AI scoring failed')
     }
     setAiLoading(false)
@@ -186,7 +243,7 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "recommendation"}`, { maxToke
     if (!lead.website) { toast.error('Add a website URL first.'); return }
     setEnriching(true)
     try {
-      const result = await enrichLeadFromWebsite(lead.website, lead.company)
+      const result = await enrichLeadFromWebsite(lead.website, lead.company, lead.id)
       if (!result) { toast.error('Enrichment failed.'); setEnriching(false); return }
       const enrichedNotes = `[Enriched ${new Date().toLocaleDateString()}]\nIndustry: ${result.industry}\nSize: ${result.company_size}\nNeeds: ${result.likely_needs}\n\n${lead.notes || ''}`.trim()
       await supabase.from('crm_leads').update({

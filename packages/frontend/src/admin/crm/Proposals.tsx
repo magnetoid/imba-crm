@@ -15,6 +15,7 @@ import {
   CheckCircle2, XCircle, Copy, Check, RefreshCw, DollarSign, Clock, FileCode,
 } from 'lucide-react'
 import { logActivity, interpolateTemplate, incrementTemplateUseCount } from './crm-utils'
+import { logGeneration, markApproved, markRejected, markSent } from '@/lib/aiGenerations'
 
 interface Template { id: string; name: string; content: string }
 
@@ -42,6 +43,7 @@ interface Proposal {
   sent_at: string | null
   signed_at: string | null
   ai_generated: boolean
+  ai_generation_id?: string | null
   created_at: string
   updated_at: string
   crm_leads?: { name: string; company: string; email: string } | null
@@ -74,6 +76,7 @@ export default function Proposals() {
   const [saving, setSaving] = useState(false)
   const [templates, setTemplates] = useState<Template[]>([])
   const [selectedTemplate, setSelectedTemplate] = useState('')
+  const [activeGenerationId, setActiveGenerationId] = useState<string | null>(null)
 
   // View dialog
   const [viewProposal, setViewProposal] = useState<Proposal | null>(null)
@@ -99,9 +102,8 @@ export default function Proposals() {
     if (!lead) return
 
     setGenerating(true)
-    try {
-      const runtime = await getCRMRuntimeSettings()
-      const text = await callAIText(`Create a professional video production proposal for Imba Production.
+    const runtime = await getCRMRuntimeSettings()
+    const prompt = `Create a professional video production proposal for Imba Production.
 ${buildCompanyContext(runtime)}
 
 Client info:
@@ -114,15 +116,36 @@ Client info:
 
 Write a polished proposal in markdown with sections: Executive Summary, Project Scope, Deliverables, Timeline, Investment, Why Imba, Next Steps.
 Start with a line formatted exactly as "Title: ..." and include a line formatted exactly as "Estimated Amount: 12000".
-Keep it under 600 words.`, { maxTokens: 1800 })
+Keep it under 600 words.`
+    try {
+      const text = await callAIText(prompt, { maxTokens: 1800 })
 
       const titleMatch = text.match(/Title:\s*(.+)/i)
       const amountMatch = text.match(/Estimated Amount:\s*\$?([\d,]+)/i)
       setProposalTitle(titleMatch?.[1]?.trim() || `Proposal for ${lead.company || lead.name}`)
       setProposalContent(text.replace(/Title:\s*.+/i, '').replace(/Estimated Amount:\s*\$?[\d,]+/i, '').trim())
       if (amountMatch?.[1]) setProposalAmount(amountMatch[1].replace(/,/g, ''))
+      const generationId = await logGeneration({
+        feature: 'proposal',
+        taskType: 'drafting',
+        leadId: lead.id,
+        input: prompt,
+        output: text,
+        status: 'draft',
+        provider: runtime.active_ai_provider,
+        model: runtime.active_ai_model,
+      })
+      setActiveGenerationId(generationId)
       toast.success('Proposal generated — review and save')
     } catch (error) {
+      await logGeneration({
+        feature: 'proposal',
+        taskType: 'drafting',
+        leadId: lead.id,
+        input: prompt,
+        error: error instanceof Error ? error.message : String(error),
+        status: 'rejected',
+      })
       toast.error(error instanceof Error ? error.message : 'Generation failed')
     }
     setGenerating(false)
@@ -137,7 +160,8 @@ Keep it under 600 words.`, { maxTokens: 1800 })
       content: proposalContent,
       amount: proposalAmount ? parseFloat(proposalAmount) : null,
       valid_until: proposalValidUntil || null,
-      ai_generated: generating,
+      ai_generated: Boolean(activeGenerationId),
+      ai_generation_id: activeGenerationId,
       status: 'draft',
     })
     setSaving(false)
@@ -156,6 +180,7 @@ Keep it under 600 words.`, { maxTokens: 1800 })
     setProposalAmount('')
     setProposalValidUntil('')
     setSelectedTemplate('')
+    setActiveGenerationId(null)
   }
 
   function applyTemplate(templateId: string) {
@@ -179,10 +204,18 @@ Keep it under 600 words.`, { maxTokens: 1800 })
     setProposals(prev => prev.map(p => p.id === id ? { ...p, status, ...extra } as Proposal : p))
     toast.success(`Marked as ${status}`)
 
-    // Log activity + auto-move lead to won on signed
+    // Log activity + keep the generation audit trail in sync.
     const proposal = proposals.find(p => p.id === id)
     if (!proposal) return
     logActivity(proposal.lead_id, 'proposal', `Proposal ${status}: ${proposal.title}`)
+
+    if (status === 'sent') {
+      // Sending = human approved + sent for proposals (no separate approval step).
+      await markApproved(proposal.ai_generation_id, proposal.content)
+      await markSent(proposal.ai_generation_id)
+    } else if (status === 'declined') {
+      await markRejected(proposal.ai_generation_id, 'proposal declined by recipient')
+    }
 
     if (status === 'signed') {
       const { data: settings } = await supabase.from('crm_runtime_settings').select('auto_won_on_proposal_signed').eq('id', 1).maybeSingle()
@@ -196,7 +229,9 @@ Keep it under 600 words.`, { maxTokens: 1800 })
 
   async function deleteProposal(id: string) {
     if (!confirm('Delete this proposal?')) return
+    const proposal = proposals.find(p => p.id === id)
     await supabase.from('crm_proposals').delete().eq('id', id)
+    await markRejected(proposal?.ai_generation_id, 'proposal deleted')
     setProposals(prev => prev.filter(p => p.id !== id))
     toast.success('Deleted')
   }

@@ -28,8 +28,10 @@ const providerMeta: Array<{
 
 export default function AISettings() {
   const [settings, setSettings] = useState<CRMRuntimeSettings>(DEFAULT_CRM_RUNTIME_SETTINGS)
+  const [providerStatuses, setProviderStatuses] = useState<Record<string, boolean>>({})
   const [showPass, setShowPass] = useState(false)
   const [visibleSecrets, setVisibleSecrets] = useState<Record<string, boolean>>({})
+  const [secretValues, setSecretValues] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testingSmtp, setTestingSmtp] = useState(false)
@@ -47,6 +49,14 @@ export default function AISettings() {
     setLoading(true)
     try {
       setSettings(await getCRMRuntimeSettings())
+      const { data } = await supabase.rpc('list_provider_credentials')
+      if (data) {
+        const statuses: Record<string, boolean> = {}
+        data.forEach((row: any) => {
+          statuses[row.provider] = row.has_key
+        })
+        setProviderStatuses(statuses)
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to load CRM settings')
     }
@@ -56,6 +66,24 @@ export default function AISettings() {
   async function saveAll(nextSettings?: CRMRuntimeSettings) {
     const payload = nextSettings ?? settings
     setSaving(true)
+    
+    // Save any newly entered secrets via RPC
+    try {
+      for (const [key, value] of Object.entries(secretValues)) {
+        if (value) {
+          const provider = key.replace('_api_key', '').replace('smtp_password', 'smtp')
+          await supabase.rpc('set_provider_credential', {
+            p_provider: provider,
+            p_api_key: value
+          })
+          setProviderStatuses(prev => ({ ...prev, [provider]: true }))
+        }
+      }
+      setSecretValues({}) // Clear secrets after saving
+    } catch (err) {
+      toast.error('Failed to save provider credentials')
+    }
+
     const { error } = await supabase.from('crm_runtime_settings').upsert({ id: 1, ...payload })
     setSaving(false)
     if (error) {
@@ -233,15 +261,16 @@ export default function AISettings() {
                       <div className="relative">
                         <Input
                           type={isVisible ? 'text' : 'password'}
-                          value={secretValue}
-                          onChange={e => setField(meta.secretKey!, e.target.value)}
+                          value={secretValues[meta.secretKey as string] ?? ''}
+                          onChange={e => setSecretValues(prev => ({ ...prev, [meta.secretKey as string]: e.target.value }))}
                           className="pr-10"
-                          placeholder={`Enter ${meta.label} API key`}
+                          placeholder={providerStatuses[meta.provider] ? '•••••••• (Set)' : `Enter ${meta.label} API key`}
                         />
                         <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => toggleSecret(String(meta.secretKey))}>
                           {isVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                         </button>
                       </div>
+                      <p className="text-[10px] text-muted-foreground">{providerStatuses[meta.provider] ? 'Key is configured. Enter a new one to replace it.' : 'Key is missing.'}</p>
                     </div>
                   )}
                   {meta.endpointKey && (
@@ -316,11 +345,18 @@ export default function AISettings() {
           <div className="flex flex-col gap-1.5">
             <Label>Password / App password</Label>
             <div className="relative">
-              <Input type={showPass ? 'text' : 'password'} value={settings.smtp_password} onChange={e => setField('smtp_password', e.target.value)} className="pr-10" />
+              <Input 
+                type={showPass ? 'text' : 'password'} 
+                value={secretValues['smtp_password'] ?? ''} 
+                onChange={e => setSecretValues(prev => ({ ...prev, smtp_password: e.target.value }))} 
+                className="pr-10"
+                placeholder={providerStatuses['smtp'] ? '•••••••• (Set)' : 'Enter SMTP password'}
+              />
               <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowPass(p => !p)}>
                 {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
+            <p className="text-[10px] text-muted-foreground">{providerStatuses['smtp'] ? 'Password is configured. Enter a new one to replace it.' : 'Password is missing.'}</p>
           </div>
           <div className="flex flex-col gap-1.5"><Label>From name</Label><Input value={settings.smtp_from_name} onChange={e => setField('smtp_from_name', e.target.value)} /></div>
           <div className="flex flex-col gap-1.5"><Label>From email</Label><Input value={settings.smtp_from_email} onChange={e => setField('smtp_from_email', e.target.value)} /></div>

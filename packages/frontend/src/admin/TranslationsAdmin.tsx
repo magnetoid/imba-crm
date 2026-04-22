@@ -8,6 +8,7 @@ import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
 import { Plus, Loader2, Globe, Sparkles, Trash2 } from 'lucide-react'
+import { callAIJSON } from '@/lib/ai'
 
 interface Translation {
   id: string
@@ -40,7 +41,6 @@ export default function TranslationsAdmin() {
 
   // AI translate
   const [aiOpen, setAiOpen] = useState(false)
-  const [aiKey, setAiKey] = useState(() => localStorage.getItem('anthropic_api_key') || '')
   const [aiLocale, setAiLocale] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
@@ -106,7 +106,6 @@ export default function TranslationsAdmin() {
   }
 
   async function handleAiTranslate() {
-    if (!aiKey.trim()) { setAiError('Enter your Anthropic API key.'); return }
     const targetName = LOCALE_NAMES[aiLocale] || aiLocale
     setAiLoading(true)
     setAiError('')
@@ -123,31 +122,8 @@ export default function TranslationsAdmin() {
       for (let i = 0; i < namespaces.length; i++) {
         const ns = namespaces[i]
         setAiProgress(`Translating namespace "${ns}" (${i + 1}/${namespaces.length})…`)
-        const res = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'x-api-key': aiKey,
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json',
-            'anthropic-dangerous-allow-browser': 'true',
-          },
-          body: JSON.stringify({
-            model: 'claude-opus-4-6',
-            max_tokens: 2048,
-            messages: [{
-              role: 'user',
-              content: `Translate these UI strings from English to ${targetName} (${aiLocale}). Return ONLY valid JSON with the same keys, values translated. Keep {{placeholder}} unchanged. Context: video production company website.\n\n${JSON.stringify(byNs[ns], null, 2)}`,
-            }],
-          }),
-        })
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}))
-          throw new Error((err as { error?: { message?: string } }).error?.message || `HTTP ${res.status}`)
-        }
-        const data = await res.json() as { content: Array<{ text: string }> }
-        const text = data.content[0]?.text || '{}'
-        const cleaned = text.replace(/^```(?:json)?\n?/m, '').replace(/```\s*$/m, '').trim()
-        const parsed = JSON.parse(cleaned) as Record<string, string>
+        const parsed = await callAIJSON<Record<string, string>>(`Translate these UI strings from English to ${targetName} (${aiLocale}). Return ONLY valid JSON with the same keys, values translated. Keep {{placeholder}} unchanged. Context: video production company website.\n\n${JSON.stringify(byNs[ns], null, 2)}`, { maxTokens: 2048 })
+        
         for (const [key, value] of Object.entries(parsed)) {
           allTranslated.push({ namespace: ns, key, value })
         }
@@ -350,11 +326,6 @@ export default function TranslationsAdmin() {
               </div>
             </div>
             <Separator />
-            <div className="flex flex-col gap-1.5">
-              <Label>Anthropic API key</Label>
-              <Input type="password" value={aiKey} onChange={e => setAiKey(e.target.value)} placeholder="sk-ant-…" />
-              <p className="text-xs text-muted-foreground">Stored locally in your browser.</p>
-            </div>
             {aiProgress && <p className="text-xs text-muted-foreground animate-pulse">{aiProgress}</p>}
             {aiError && <p className="text-destructive text-sm">{aiError}</p>}
           </div>

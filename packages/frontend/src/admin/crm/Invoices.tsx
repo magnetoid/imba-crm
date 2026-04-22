@@ -189,20 +189,16 @@ export default function Invoices() {
     setTimeout(() => setCopied(null), 2000)
   }
 
-  const filtered = statusFilter === 'all' ? invoices : invoices.filter(i => i.status === statusFilter)
-  const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + i.total, 0)
-  const outstanding = invoices.filter(i => ['sent', 'overdue'].includes(i.status)).reduce((s, i) => s + i.total, 0)
-
-  // Check for overdue invoices
-  useEffect(() => {
-    const now = new Date()
-    invoices.forEach(inv => {
-      if (inv.status === 'sent' && inv.due_date && new Date(inv.due_date) < now) {
-        supabase.from('crm_invoices').update({ status: 'overdue' }).eq('id', inv.id)
-        setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, status: 'overdue' } : i))
-      }
-    })
-  }, [invoices.length]) // Only re-run when count changes, not on every state update
+  const now = Date.now()
+  const displayInvoices = invoices.map(inv => {
+    if (inv.status === 'sent' && inv.due_date && new Date(inv.due_date).getTime() < now) {
+      return { ...inv, status: 'overdue' }
+    }
+    return inv
+  })
+  const filtered = statusFilter === 'all' ? displayInvoices : displayInvoices.filter(i => i.status === statusFilter)
+  const totalRevenue = displayInvoices.filter(i => i.status === 'paid').reduce((s, i) => s + i.total, 0)
+  const outstanding = displayInvoices.filter(i => ['sent', 'overdue'].includes(i.status)).reduce((s, i) => s + i.total, 0)
 
   const leadProposals = proposals.filter(p => p.lead_id === selectedLead)
 
@@ -227,10 +223,10 @@ export default function Invoices() {
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-8">
         {[
-          { label: 'Total invoices', value: invoices.length, icon: Receipt },
+          { label: 'Total invoices', value: displayInvoices.length, icon: Receipt },
           { label: 'Revenue', value: totalRevenue ? `$${totalRevenue.toLocaleString()}` : '$0', icon: DollarSign, color: 'text-emerald-400' },
           { label: 'Outstanding', value: outstanding ? `$${outstanding.toLocaleString()}` : '$0', icon: Clock, color: outstanding > 0 ? 'text-amber-400' : undefined },
-          { label: 'Overdue', value: invoices.filter(i => i.status === 'overdue').length, icon: AlertCircle, color: invoices.some(i => i.status === 'overdue') ? 'text-red-400' : undefined },
+          { label: 'Overdue', value: displayInvoices.filter(i => i.status === 'overdue').length, icon: AlertCircle, color: displayInvoices.some(i => i.status === 'overdue') ? 'text-red-400' : undefined },
         ].map(s => (
           <div key={s.label} className="bg-card border border-border rounded-lg px-4 py-3">
             <div className="flex items-center gap-2 mb-1">
@@ -269,7 +265,7 @@ export default function Invoices() {
         {['all', ...Object.keys(STATUS_META)].map(s => (
           <button key={s} onClick={() => setStatusFilter(s)}
             className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${statusFilter === s ? 'bg-amber-500/15 text-amber-400' : 'text-muted-foreground hover:text-foreground'}`}>
-            {s === 'all' ? `All (${invoices.length})` : `${STATUS_META[s]?.label || s} (${invoices.filter(i => i.status === s).length})`}
+            {s === 'all' ? `All (${displayInvoices.length})` : `${STATUS_META[s]?.label || s} (${displayInvoices.filter(i => i.status === s).length})`}
           </button>
         ))}
       </div>

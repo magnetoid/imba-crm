@@ -9,7 +9,7 @@ import { Separator } from '@/components/ui/separator'
 import {
   LayoutDashboard, Film, Image, FileText, MessageSquare, LogOut, Loader2,
   FolderOpen, Tag, Upload, Globe, Users, Search, ArrowLeft, ChevronRight, Star,
-  Send, Inbox, BarChart2, Settings, Receipt, FileCode
+  Send, Inbox, BarChart2, Settings, Receipt, FileCode, History
 } from 'lucide-react'
 
 const NAV_CMS_CONTENT = [
@@ -223,6 +223,7 @@ export default function AdminLayout() {
             <Separator className="my-2" />
             <p className="px-3 py-1 text-[0.6rem] font-mono tracking-widest uppercase text-amber-500/40 mb-1">Intelligence</p>
             <NavItem to="/admin/crm/analytics" label="Analytics" icon={BarChart2} crm />
+            <NavItem to="/admin/crm/audit" label="AI Audit" icon={History} crm />
             <NavItem to="/admin/crm/settings" label="Settings" icon={Settings} crm />
             <Separator className="my-2" />
             <p className="px-3 py-1 text-[0.6rem] font-mono tracking-widest uppercase text-amber-500/40 mb-1">Leads</p>
