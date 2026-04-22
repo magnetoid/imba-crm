@@ -90,15 +90,19 @@ export default function AdminLayout() {
     </div>
   )
 
+  const onCRMSubdomain = typeof window !== 'undefined' && window.location.hostname.startsWith('crm.')
+  const crmStyled = onCRMSubdomain || location.pathname.startsWith('/admin/crm')
+
   if (!session) return (
     <div className="min-h-screen bg-background flex items-center justify-center px-6">
       <Card className="w-full max-w-sm">
         <CardHeader className="space-y-1 pb-4">
           <div className="text-2xl font-semibold text-foreground">
-            imba<span className="text-primary italic">.</span>admin
+            imba<span className={crmStyled ? 'italic' : 'text-primary italic'}
+              style={crmStyled ? { color: '#C9A96E' } : undefined}>.</span>{crmStyled ? 'crm' : 'admin'}
           </div>
           <CardTitle className="text-base text-muted-foreground font-normal">
-            Sign in to your workspace
+            {crmStyled ? 'Sign in to your CRM workspace' : 'Sign in to your workspace'}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -114,7 +118,8 @@ export default function AdminLayout() {
                 value={password} onChange={e => setPassword(e.target.value)} required />
             </div>
             {loginError && <p className="text-destructive text-sm">{loginError}</p>}
-            <Button type="submit" disabled={signingIn} className="w-full">
+            <Button type="submit" disabled={signingIn} className="w-full"
+              style={crmStyled ? { background: '#C9A96E', color: '#0a0a0a' } : undefined}>
               {signingIn ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Signing in…</> : 'Sign in'}
             </Button>
           </form>

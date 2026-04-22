@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import { useEffect } from 'react'
 import '@/i18n'
 import Nav from '@/components/Nav'
@@ -15,6 +15,7 @@ import BlogPost from '@/pages/BlogPost'
 import Contact from '@/pages/Contact'
 import Reviews from '@/pages/Reviews'
 import ServicePage from '@/pages/services/ServicePage'
+import CRMLogin from '@/pages/CRMLogin'
 import AdminLayout from '@/admin/AdminLayout'
 import AdminLanding from '@/admin/AdminLanding'
 import Dashboard from '@/admin/Dashboard'
@@ -73,22 +74,41 @@ function PublicLayout({ children }: { children: React.ReactNode }) {
   )
 }
 
+const isCRMSubdomain = typeof window !== 'undefined' && window.location.hostname.startsWith('crm.')
+
 export default function App() {
   return (
     <ErrorBoundary>
       <QuoteModalProvider>
         <QuoteModal />
         <Routes>
-        {/* Public */}
-        <Route path="/" element={<PublicLayout><Home /></PublicLayout>} />
-        <Route path="/work" element={<PublicLayout><Work /></PublicLayout>} />
-        <Route path="/services" element={<PublicLayout><Services /></PublicLayout>} />
-        <Route path="/services/:slug" element={<PublicLayout><ServicePage /></PublicLayout>} />
-        <Route path="/about" element={<PublicLayout><About /></PublicLayout>} />
-        <Route path="/blog" element={<PublicLayout><Blog /></PublicLayout>} />
-        <Route path="/blog/:slug" element={<PublicLayout><BlogPost /></PublicLayout>} />
-        <Route path="/contact" element={<PublicLayout><Contact /></PublicLayout>} />
-<Route path="/reviews" element={<PublicLayout><Reviews /></PublicLayout>} />
+        {/* CRM subdomain: root is CRM login / gate; public marketing pages hidden */}
+        {isCRMSubdomain ? (
+          <>
+            <Route path="/" element={<CRMLogin />} />
+            <Route path="/work" element={<Navigate to="/" replace />} />
+            <Route path="/services" element={<Navigate to="/" replace />} />
+            <Route path="/services/:slug" element={<Navigate to="/" replace />} />
+            <Route path="/about" element={<Navigate to="/" replace />} />
+            <Route path="/blog" element={<Navigate to="/" replace />} />
+            <Route path="/blog/:slug" element={<Navigate to="/" replace />} />
+            <Route path="/contact" element={<Navigate to="/" replace />} />
+            <Route path="/reviews" element={<Navigate to="/" replace />} />
+          </>
+        ) : (
+          <>
+            {/* Public */}
+            <Route path="/" element={<PublicLayout><Home /></PublicLayout>} />
+            <Route path="/work" element={<PublicLayout><Work /></PublicLayout>} />
+            <Route path="/services" element={<PublicLayout><Services /></PublicLayout>} />
+            <Route path="/services/:slug" element={<PublicLayout><ServicePage /></PublicLayout>} />
+            <Route path="/about" element={<PublicLayout><About /></PublicLayout>} />
+            <Route path="/blog" element={<PublicLayout><Blog /></PublicLayout>} />
+            <Route path="/blog/:slug" element={<PublicLayout><BlogPost /></PublicLayout>} />
+            <Route path="/contact" element={<PublicLayout><Contact /></PublicLayout>} />
+            <Route path="/reviews" element={<PublicLayout><Reviews /></PublicLayout>} />
+          </>
+        )}
 
         {/* Admin */}
         <Route path="/admin" element={<AdminLayout />}>
