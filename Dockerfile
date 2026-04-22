@@ -26,6 +26,7 @@ RUN pnpm --filter @agencycrm/model-router build \
 FROM base AS prod-deps
 COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* ./
 COPY packages/model-router/package.json ./packages/model-router/
+COPY packages/frontend/package.json ./packages/frontend/
 RUN pnpm install --frozen-lockfile --prod --filter @agencycrm/model-router...
 
 # ── Runtime: nginx serving the SPA + node running the router ─
