@@ -7,7 +7,7 @@ FROM base AS deps
 COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* ./
 COPY packages/model-router/package.json ./packages/model-router/
 COPY packages/frontend/package.json ./packages/frontend/
-RUN pnpm install --frozen-lockfile
+RUN pnpm install
 
 # ── Build ────────────────────────────────────────────────────
 FROM deps AS build
@@ -27,7 +27,7 @@ FROM base AS prod-deps
 COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* ./
 COPY packages/model-router/package.json ./packages/model-router/
 COPY packages/frontend/package.json ./packages/frontend/
-RUN pnpm install --frozen-lockfile --prod --filter @agencycrm/model-router...
+RUN pnpm install --prod --filter @agencycrm/model-router...
 
 # ── Runtime: nginx serving the SPA + node running the router ─
 FROM nginx:alpine AS production
