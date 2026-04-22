@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route } from 'react-router-dom'
 import { useEffect } from 'react'
 import '@/i18n'
 import Nav from '@/components/Nav'
@@ -15,7 +15,6 @@ import BlogPost from '@/pages/BlogPost'
 import Contact from '@/pages/Contact'
 import Reviews from '@/pages/Reviews'
 import ServicePage from '@/pages/services/ServicePage'
-import CRMLogin from '@/pages/CRMLogin'
 import AdminLayout from '@/admin/AdminLayout'
 import AdminLanding from '@/admin/AdminLanding'
 import Dashboard from '@/admin/Dashboard'
@@ -28,20 +27,8 @@ import BlogCategoriesAdmin from '@/admin/BlogCategoriesAdmin'
 import ImportAdmin from '@/admin/ImportAdmin'
 import TranslationsAdmin from '@/admin/TranslationsAdmin'
 import TestimonialsAdmin from '@/admin/TestimonialsAdmin'
-import CRMDashboard from '@/admin/crm/CRMDashboard'
-import LeadDetail from '@/admin/crm/LeadDetail'
-import SEOManager from '@/admin/crm/SEOManager'
-import AILeadSearcher from '@/admin/crm/AILeadSearcher'
-import AIOutreach from '@/admin/crm/AIOutreach'
-import AIInbox from '@/admin/crm/AIInbox'
-import AIAnalytics from '@/admin/crm/AIAnalytics'
-import AIAudit from '@/admin/crm/AIAudit'
-import AISettings from '@/admin/crm/AISettings'
-import Proposals from '@/admin/crm/Proposals'
-import Invoices from '@/admin/crm/Invoices'
-import Templates from '@/admin/crm/Templates'
+import SeoAdmin from '@/admin/SeoAdmin'
 
-// Scroll reveal observer
 function useScrollReveal() {
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -74,69 +61,37 @@ function PublicLayout({ children }: { children: React.ReactNode }) {
   )
 }
 
-const isCRMSubdomain = typeof window !== 'undefined' && window.location.hostname.startsWith('crm.')
-
 export default function App() {
   return (
     <ErrorBoundary>
       <QuoteModalProvider>
         <QuoteModal />
         <Routes>
-        {/* CRM subdomain: root is CRM login / gate; public marketing pages hidden */}
-        {isCRMSubdomain ? (
-          <>
-            <Route path="/" element={<CRMLogin />} />
-            <Route path="/work" element={<Navigate to="/" replace />} />
-            <Route path="/services" element={<Navigate to="/" replace />} />
-            <Route path="/services/:slug" element={<Navigate to="/" replace />} />
-            <Route path="/about" element={<Navigate to="/" replace />} />
-            <Route path="/blog" element={<Navigate to="/" replace />} />
-            <Route path="/blog/:slug" element={<Navigate to="/" replace />} />
-            <Route path="/contact" element={<Navigate to="/" replace />} />
-            <Route path="/reviews" element={<Navigate to="/" replace />} />
-          </>
-        ) : (
-          <>
-            {/* Public */}
-            <Route path="/" element={<PublicLayout><Home /></PublicLayout>} />
-            <Route path="/work" element={<PublicLayout><Work /></PublicLayout>} />
-            <Route path="/services" element={<PublicLayout><Services /></PublicLayout>} />
-            <Route path="/services/:slug" element={<PublicLayout><ServicePage /></PublicLayout>} />
-            <Route path="/about" element={<PublicLayout><About /></PublicLayout>} />
-            <Route path="/blog" element={<PublicLayout><Blog /></PublicLayout>} />
-            <Route path="/blog/:slug" element={<PublicLayout><BlogPost /></PublicLayout>} />
-            <Route path="/contact" element={<PublicLayout><Contact /></PublicLayout>} />
-            <Route path="/reviews" element={<PublicLayout><Reviews /></PublicLayout>} />
-          </>
-        )}
+          <Route path="/" element={<PublicLayout><Home /></PublicLayout>} />
+          <Route path="/work" element={<PublicLayout><Work /></PublicLayout>} />
+          <Route path="/services" element={<PublicLayout><Services /></PublicLayout>} />
+          <Route path="/services/:slug" element={<PublicLayout><ServicePage /></PublicLayout>} />
+          <Route path="/about" element={<PublicLayout><About /></PublicLayout>} />
+          <Route path="/blog" element={<PublicLayout><Blog /></PublicLayout>} />
+          <Route path="/blog/:slug" element={<PublicLayout><BlogPost /></PublicLayout>} />
+          <Route path="/contact" element={<PublicLayout><Contact /></PublicLayout>} />
+          <Route path="/reviews" element={<PublicLayout><Reviews /></PublicLayout>} />
 
-        {/* Admin */}
-        <Route path="/admin" element={<AdminLayout />}>
-          <Route index element={<AdminLanding />} />
-          <Route path="dashboard" element={<Dashboard />} />
-          <Route path="hero-videos" element={<HeroVideosAdmin />} />
-          <Route path="portfolio" element={<PortfolioAdmin />} />
-          <Route path="blog" element={<BlogAdmin />} />
-          <Route path="blog/categories" element={<BlogCategoriesAdmin />} />
-          <Route path="media" element={<MediaAdmin />} />
-          <Route path="import" element={<ImportAdmin />} />
-          <Route path="quotes" element={<QuoteRequests />} />
-          <Route path="seo" element={<SEOManager />} />
-          <Route path="translations" element={<TranslationsAdmin />} />
-          <Route path="testimonials" element={<TestimonialsAdmin />} />
-          <Route path="crm" element={<CRMDashboard />} />
-          <Route path="crm/ai-search" element={<AILeadSearcher />} />
-          <Route path="crm/outreach" element={<AIOutreach />} />
-          <Route path="crm/inbox" element={<AIInbox />} />
-          <Route path="crm/proposals" element={<Proposals />} />
-          <Route path="crm/invoices" element={<Invoices />} />
-          <Route path="crm/templates" element={<Templates />} />
-          <Route path="crm/analytics" element={<AIAnalytics />} />
-          <Route path="crm/audit" element={<AIAudit />} />
-          <Route path="crm/settings" element={<AISettings />} />
-          <Route path="crm/:id" element={<LeadDetail />} />
-        </Route>
-      </Routes>
+          <Route path="/admin" element={<AdminLayout />}>
+            <Route index element={<AdminLanding />} />
+            <Route path="dashboard" element={<Dashboard />} />
+            <Route path="hero-videos" element={<HeroVideosAdmin />} />
+            <Route path="portfolio" element={<PortfolioAdmin />} />
+            <Route path="blog" element={<BlogAdmin />} />
+            <Route path="blog/categories" element={<BlogCategoriesAdmin />} />
+            <Route path="media" element={<MediaAdmin />} />
+            <Route path="import" element={<ImportAdmin />} />
+            <Route path="quotes" element={<QuoteRequests />} />
+            <Route path="seo" element={<SeoAdmin />} />
+            <Route path="translations" element={<TranslationsAdmin />} />
+            <Route path="testimonials" element={<TestimonialsAdmin />} />
+          </Route>
+        </Routes>
       </QuoteModalProvider>
     </ErrorBoundary>
   )

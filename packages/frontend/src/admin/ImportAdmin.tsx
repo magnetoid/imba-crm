@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
-import { supabase } from '@/lib/supabase'
-import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
+import { supabase } from '@imba/shared/supabase'
+import { Button } from '@imba/shared/ui/button'
+import { Separator } from '@imba/shared/ui/separator'
 import { Loader2, Upload, Download, FileText } from 'lucide-react'
 
 interface ParsedPost {

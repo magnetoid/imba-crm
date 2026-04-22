@@ -1,17 +1,17 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '@/lib/supabase'
-import type { QuoteRequest } from '@/lib/supabase'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { supabase } from '@imba/shared/supabase'
+import type { QuoteRequest } from '@imba/shared/supabase'
+import { Badge } from '@imba/shared/ui/badge'
+import { Button } from '@imba/shared/ui/button'
 import {
   Table, TableHeader, TableBody, TableHead, TableRow, TableCell,
-} from '@/components/ui/table'
+} from '@imba/shared/ui/table'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog'
+} from '@imba/shared/ui/dialog'
 import {
   Select, SelectContent, SelectItem, SelectTrigger,
-} from '@/components/ui/select'
+} from '@imba/shared/ui/select'
 import { Loader2, MessageSquare, Trash2, Eye } from 'lucide-react'
 
 const STATUSES = [

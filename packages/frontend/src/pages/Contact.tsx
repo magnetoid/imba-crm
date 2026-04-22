@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { supabase } from '@imba/shared/supabase'
 import Seo from '@/components/Seo'
 
 const SERVICES = [

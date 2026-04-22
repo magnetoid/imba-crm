@@ -21,7 +21,7 @@ import {
   Image as ImageIcon, Code, Quote, Undo, Redo, Minus,
   Maximize2, Minimize2, Loader2
 } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
+import { supabase } from '@imba/shared/supabase'
 import { sanitizeHtml } from '@/utils/sanitizeHtml'
 import { EDITOR_PRESETS, type EditorPreset } from './editorPresets'
 import * as Y from 'yjs'

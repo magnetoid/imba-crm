@@ -18,7 +18,9 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@imba/shared": ["../shared/src"],
+      "@imba/shared/*": ["../shared/src/*"]
     }
   },
   "include": ["src"],

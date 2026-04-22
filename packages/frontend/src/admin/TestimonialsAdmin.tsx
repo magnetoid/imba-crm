@@ -1,17 +1,17 @@
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
-import type { Testimonial } from '@/lib/supabase'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { Switch } from '@/components/ui/switch'
+import { supabase } from '@imba/shared/supabase'
+import type { Testimonial } from '@imba/shared/supabase'
+import { Button } from '@imba/shared/ui/button'
+import { Input } from '@imba/shared/ui/input'
+import { Label } from '@imba/shared/ui/label'
+import { Textarea } from '@imba/shared/ui/textarea'
+import { Switch } from '@imba/shared/ui/switch'
 import {
   Table, TableHeader, TableBody, TableHead, TableRow, TableCell,
-} from '@/components/ui/table'
+} from '@imba/shared/ui/table'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog'
+} from '@imba/shared/ui/dialog'
 import { Plus, Pencil, Trash2, Loader2, Star } from 'lucide-react'
 
 const EMPTY_FORM = {

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { supabase } from '@/lib/supabase'
+import { supabase } from '@imba/shared/supabase'
 
 interface LangOption {
   locale: string

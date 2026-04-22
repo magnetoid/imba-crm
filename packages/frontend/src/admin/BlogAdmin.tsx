@@ -1,29 +1,29 @@
 import { useState, useEffect, useRef } from 'react'
-import { supabase } from '@/lib/supabase'
-import type { BlogPost, BlogCategory } from '@/lib/supabase'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { Badge } from '@/components/ui/badge'
-import { Switch } from '@/components/ui/switch'
+import { supabase } from '@imba/shared/supabase'
+import type { BlogPost, BlogCategory } from '@imba/shared/supabase'
+import { Button } from '@imba/shared/ui/button'
+import { Input } from '@imba/shared/ui/input'
+import { Label } from '@imba/shared/ui/label'
+import { Textarea } from '@imba/shared/ui/textarea'
+import { Badge } from '@imba/shared/ui/badge'
+import { Switch } from '@imba/shared/ui/switch'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from '@imba/shared/ui/select'
 import {
   Table, TableHeader, TableBody, TableHead, TableRow, TableCell,
-} from '@/components/ui/table'
+} from '@imba/shared/ui/table'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog'
-import { Separator } from '@/components/ui/separator'
+} from '@imba/shared/ui/dialog'
+import { Separator } from '@imba/shared/ui/separator'
 import { Plus, Pencil, Trash2, Loader2, FileText, Sparkles, X } from 'lucide-react'
 import TiptapEditor from './TiptapEditor'
-import { callAIText } from '@/lib/ai'
+import { callAIText } from '@imba/shared/lib/ai'
 import { EDITOR_PRESETS } from './editorPresets'
 
 const EMPTY_FORM = {

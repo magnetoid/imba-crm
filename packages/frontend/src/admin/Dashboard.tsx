@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '@/lib/supabase'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { supabase } from '@imba/shared/supabase'
+import { Card, CardHeader, CardTitle, CardContent } from '@imba/shared/ui/card'
 import { Image, FileText, MessageSquare, Film } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 

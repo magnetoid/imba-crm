@@ -1,23 +1,23 @@
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
-import type { BlogCategory } from '@/lib/supabase'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
+import { supabase } from '@imba/shared/supabase'
+import type { BlogCategory } from '@imba/shared/supabase'
+import { Button } from '@imba/shared/ui/button'
+import { Input } from '@imba/shared/ui/input'
+import { Label } from '@imba/shared/ui/label'
+import { Textarea } from '@imba/shared/ui/textarea'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from '@imba/shared/ui/select'
 import {
   Table, TableHeader, TableBody, TableHead, TableRow, TableCell,
-} from '@/components/ui/table'
+} from '@imba/shared/ui/table'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog'
+} from '@imba/shared/ui/dialog'
 import { Plus, Pencil, Trash2, Loader2, Tag } from 'lucide-react'
 
 const EMPTY_FORM = {

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuoteModal } from '@/contexts/QuoteModalContext'
-import { supabase } from '@/lib/supabase'
+import { supabase } from '@imba/shared/supabase'
 
 const SERVICES = [
   'Brand & Commercial Video',

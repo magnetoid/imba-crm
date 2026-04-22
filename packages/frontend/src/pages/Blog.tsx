@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase } from '@/lib/supabase'
-import type { BlogPost } from '@/lib/supabase'
+import { supabase } from '@imba/shared/supabase'
+import type { BlogPost } from '@imba/shared/supabase'
 import Seo from '@/components/Seo'
 
 const STATIC_POSTS = [

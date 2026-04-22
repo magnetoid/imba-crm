@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase'
+import { supabase } from '@imba/shared/supabase'
 
 interface RoleMetadata {
   role?: string

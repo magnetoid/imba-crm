@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useEffect, useState } from 'react'
-import { supabase } from '@/lib/supabase'
-import type { PortfolioItem, Testimonial, HeroVideo } from '@/lib/supabase'
+import { supabase } from '@imba/shared/supabase'
+import type { PortfolioItem, Testimonial, HeroVideo } from '@imba/shared/supabase'
 import Seo from '@/components/Seo'
 
 // ── Static fallback data ──────────────────────────

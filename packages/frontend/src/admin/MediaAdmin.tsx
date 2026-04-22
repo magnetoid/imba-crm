@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
-import { supabase } from '@/lib/supabase'
-import type { MediaFile } from '@/lib/supabase'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
+import { supabase } from '@imba/shared/supabase'
+import type { MediaFile } from '@imba/shared/supabase'
+import { Button } from '@imba/shared/ui/button'
+import { Input } from '@imba/shared/ui/input'
+import { Label } from '@imba/shared/ui/label'
+import { Textarea } from '@imba/shared/ui/textarea'
 import {
   Table, TableHeader, TableBody, TableHead, TableRow, TableCell,
-} from '@/components/ui/table'
+} from '@imba/shared/ui/table'
 import { Loader2, Upload, Grid, List, Copy, Trash2, Film, Image as ImageIcon, Check } from 'lucide-react'
 
 type ViewMode = 'grid' | 'list'

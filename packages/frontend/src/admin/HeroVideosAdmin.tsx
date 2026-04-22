@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
-import type { HeroVideo } from '@/lib/supabase'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
-import { Switch } from '@/components/ui/switch'
+import { supabase } from '@imba/shared/supabase'
+import type { HeroVideo } from '@imba/shared/supabase'
+import { Button } from '@imba/shared/ui/button'
+import { Input } from '@imba/shared/ui/input'
+import { Label } from '@imba/shared/ui/label'
+import { Badge } from '@imba/shared/ui/badge'
+import { Switch } from '@imba/shared/ui/switch'
 import {
   Table,
   TableHeader,
@@ -13,14 +13,14 @@ import {
   TableHead,
   TableRow,
   TableCell,
-} from '@/components/ui/table'
+} from '@imba/shared/ui/table'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from '@/components/ui/dialog'
+} from '@imba/shared/ui/dialog'
 import { Plus, Pencil, Trash2, ExternalLink, Loader2, Film } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { isAdminUser } from '@/admin/utils/adminPermissions'

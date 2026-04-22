@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
-import type { Testimonial } from '@/lib/supabase'
+import { supabase } from '@imba/shared/supabase'
+import type { Testimonial } from '@imba/shared/supabase'
 import Seo from '@/components/Seo'
 import { useQuoteModal } from '@/contexts/QuoteModalContext'
 

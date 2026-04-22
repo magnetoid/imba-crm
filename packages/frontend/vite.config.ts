@@ -7,6 +7,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      '@imba/shared': path.resolve(__dirname, '../shared/src'),
     },
   },
   server: {

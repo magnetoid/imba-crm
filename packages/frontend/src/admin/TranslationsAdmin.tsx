@@ -1,14 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
-import { supabase } from '@/lib/supabase'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
-import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@/components/ui/table'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { Separator } from '@/components/ui/separator'
+import { supabase } from '@imba/shared/supabase'
+import { Button } from '@imba/shared/ui/button'
+import { Input } from '@imba/shared/ui/input'
+import { Label } from '@imba/shared/ui/label'
+import { Badge } from '@imba/shared/ui/badge'
+import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@imba/shared/ui/table'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@imba/shared/ui/dialog'
+import { Separator } from '@imba/shared/ui/separator'
 import { Plus, Loader2, Globe, Sparkles, Trash2 } from 'lucide-react'
-import { callAIJSON } from '@/lib/ai'
+import { callAIJSON } from '@imba/shared/lib/ai'
 
 interface Translation {
   id: string
