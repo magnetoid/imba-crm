@@ -236,6 +236,9 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.17.0
         version: 5.99.2(react@18.3.1)
+      '@tiptap/core':
+        specifier: ^3.21.0
+        version: 3.22.4(@tiptap/pm@3.22.4)
       '@tiptap/extension-character-count':
         specifier: ^3.21.0
         version: 3.22.4(@tiptap/extensions@3.22.4(@tiptap/core@3.22.4(@tiptap/pm@3.22.4))(@tiptap/pm@3.22.4))
@@ -451,6 +454,12 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.39.0
         version: 2.104.0
+      '@types/react':
+        specifier: ^18.2.48
+        version: 18.3.28
+      '@types/react-dom':
+        specifier: ^18.2.18
+        version: 18.3.7(@types/react@18.3.28)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -473,12 +482,6 @@ importers:
         specifier: ^2.2.0
         version: 2.6.1
     devDependencies:
-      '@types/react':
-        specifier: ^18.2.48
-        version: 18.3.28
-      '@types/react-dom':
-        specifier: ^18.2.18
-        version: 18.3.7(@types/react@18.3.28)
       typescript:
         specifier: ^5.2.2
         version: 5.9.3

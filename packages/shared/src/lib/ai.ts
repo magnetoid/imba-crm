@@ -8,6 +8,9 @@ export interface AIRequestOptions {
   model?: string
   temperature?: number
   json?: boolean
+  feature?: string
+  lead_id?: string
+  task_type?: string
 }
 
 export interface CRMRuntimeSettings {
@@ -40,6 +43,9 @@ export interface CRMRuntimeSettings {
   scheduling_url: string
   lead_sources_enabled: string[]
   outreach_daily_limit: number
+  ai_monthly_cap_cents: number
+  ai_soft_cap_cents: number
+  ai_cap_action: 'block' | 'downgrade' | 'require_approval'
 }
 
 export interface ProviderCredentialStatus {
@@ -78,9 +84,43 @@ export const DEFAULT_CRM_RUNTIME_SETTINGS: CRMRuntimeSettings = {
   scheduling_url: '',
   lead_sources_enabled: ['manual', 'quote_form', 'ai_search'],
   outreach_daily_limit: 50,
+  ai_monthly_cap_cents: 50000,
+  ai_soft_cap_cents: 35000,
+  ai_cap_action: 'block',
 }
 
 export async function callAI<T = string>(prompt: string, options?: AIRequestOptions): Promise<T> {
+  // 1. Fetch runtime settings to check cost caps
+  let settings: CRMRuntimeSettings | null = null;
+  try {
+    settings = await getCRMRuntimeSettings();
+  } catch (e) {
+    console.warn('Failed to load settings for cost cap check', e);
+  }
+
+  let currentCost = 0;
+  if (settings && settings.ai_monthly_cap_cents > 0) {
+    // Calculate current month's cost
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+
+    const { data: costData } = await supabase
+      .from('ai_generations')
+      .select('cost_cents')
+      .gte('created_at', startOfMonth.toISOString());
+    
+    currentCost = (costData || []).reduce((sum, row) => sum + (row.cost_cents || 0), 0);
+    
+    if (currentCost >= settings.ai_monthly_cap_cents) {
+      if (settings.ai_cap_action === 'block') {
+        throw new Error(`AI Cost Cap Exceeded: The organization has reached its monthly limit of $${(settings.ai_monthly_cap_cents / 100).toFixed(2)}.`);
+      } else if (settings.ai_cap_action === 'downgrade') {
+        options = { ...options, provider: 'anthropic', model: 'claude-3-haiku-20240307' };
+      }
+    }
+  }
+
   const response = await fetch('/api/ai/route', {
     method: 'POST',
     headers: {
@@ -105,20 +145,47 @@ export async function callAI<T = string>(prompt: string, options?: AIRequestOpti
     throw new Error(`AI Request failed: ${response.status} ${text}`)
   }
 
-  const data = await response.json()
+  const result = await response.json()
   
+  if (!result.ok) {
+    throw new Error(`AI Router error: ${result.error?.message || 'Unknown error'}`)
+  }
+
+  const rawContent = result.data?.content || ''
+  
+  // Log to ai_generations
+  try {
+    const userRes = await supabase.auth.getUser()
+    await supabase.from('ai_generations').insert({
+      feature: options?.feature || 'general',
+      task_type: options?.task_type || 'reasoning',
+      lead_id: options?.lead_id || null,
+      input_text: prompt,
+      output_text: rawContent,
+      provider: result.event?.provider,
+      model: result.event?.model,
+      tokens_in: result.event?.tokensIn,
+      tokens_out: result.event?.tokensOut,
+      cost_cents: result.event?.costCents,
+      status: (settings?.ai_cap_action === 'require_approval' && currentCost >= (settings.ai_monthly_cap_cents || 0)) ? 'draft' : 'logged',
+      created_by: userRes.data.user?.id
+    })
+  } catch (e) {
+    console.error('Failed to log AI generation:', e)
+  }
+
   if (options?.json) {
     try {
       // Try to parse the content as JSON if requested
-      const jsonStr = data.content.replace(/```json\n?|\n?```/g, '').trim()
+      const jsonStr = rawContent.replace(/```json\n?|\n?```/g, '').trim()
       return JSON.parse(jsonStr) as T
     } catch (e) {
-      console.warn('Failed to parse AI response as JSON', data.content)
-      return data.content as T
+      console.warn('Failed to parse AI response as JSON', rawContent)
+      return rawContent as T
     }
   }
 
-  return data.content as T
+  return rawContent as T
 }
 
 export async function callAIText(prompt: string, options?: Omit<AIRequestOptions, 'json'>): Promise<string> {

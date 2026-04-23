@@ -15,7 +15,7 @@ const providerMeta: Array<{
   label: string
   modelKey: keyof CRMRuntimeSettings
   modelsKey: keyof CRMRuntimeSettings
-  secretKey?: keyof CRMRuntimeSettings
+  secretKey?: string
   endpointKey?: keyof CRMRuntimeSettings
   placeholder: string
 }> = [
@@ -239,7 +239,8 @@ export default function AISettings() {
         <div className="grid grid-cols-1 gap-4 mb-5">
           {providerMeta.map(meta => {
             const currentModels = (settings[meta.modelsKey] as string[]) || []
-            const secretValue = meta.secretKey ? String(settings[meta.secretKey] || '') : ''
+            // We do not fetch actual secret values from the database to the browser
+            // const isConfigured = providerStatuses[meta.provider]
             const endpointValue = meta.endpointKey ? String(settings[meta.endpointKey] || '') : ''
             const modelValue = String(settings[meta.modelKey] || '')
             const isVisible = visibleSecrets[String(meta.secretKey)]
@@ -374,6 +375,53 @@ export default function AISettings() {
         <div className="flex gap-2">
           <Button onClick={() => void saveAll()} disabled={saving} className="gap-2">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save settings</Button>
           <Button variant="outline" onClick={testSmtp} disabled={testingSmtp || !settings.smtp_host || !settings.smtp_username} className="gap-2">{testingSmtp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />} Test SMTP</Button>
+        </div>
+      </section>
+
+      <Separator className="mb-10" />
+
+      <section className="mb-10">
+        <div className="flex items-center gap-2 mb-1">
+          <BrainCircuit className="h-4 w-4 text-amber-500" />
+          <h2 className="font-medium">AI Governance & Cost Controls</h2>
+        </div>
+        <p className="text-xs text-muted-foreground mb-5">Set monthly spend limits and fallback behaviors for all AI operations across the CRM.</p>
+        
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+          <div className="flex flex-col gap-1.5">
+            <Label>Monthly Cap (USD)</Label>
+            <Input 
+              type="number" 
+              min="0" 
+              step="1"
+              value={(settings.ai_monthly_cap_cents || 0) / 100} 
+              onChange={e => setField('ai_monthly_cap_cents', Math.round((Number(e.target.value) || 0) * 100))} 
+            />
+            <p className="text-[10px] text-muted-foreground">Hard limit for the organization</p>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Soft Cap Warning (USD)</Label>
+            <Input 
+              type="number" 
+              min="0" 
+              step="1"
+              value={(settings.ai_soft_cap_cents || 0) / 100} 
+              onChange={e => setField('ai_soft_cap_cents', Math.round((Number(e.target.value) || 0) * 100))} 
+            />
+            <p className="text-[10px] text-muted-foreground">Trigger warnings when reached</p>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>When cap is hit</Label>
+            <Select value={settings.ai_cap_action || 'block'} onValueChange={(v: 'block' | 'downgrade' | 'require_approval') => setField('ai_cap_action', v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="block">Block all AI actions</SelectItem>
+                <SelectItem value="downgrade">Downgrade to cheapest model</SelectItem>
+                <SelectItem value="require_approval">Require manual approval</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-[10px] text-muted-foreground">Action taken on hard cap</p>
+          </div>
         </div>
       </section>
 

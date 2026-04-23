@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@imba/shared/supabase'
+import { callAIJSON, callAIText } from '@imba/shared/lib/ai'
 import { Button } from '@imba/shared/ui/button'
 import { Input } from '@imba/shared/ui/input'
 import { Label } from '@imba/shared/ui/label'
