@@ -1,15 +1,15 @@
 version: '3.9'
 
 # ─────────────────────────────────────────────────────────────
-#  imba-crm stack
+#  imba-crm — Coolify project "Imba CRM"
+#  Deploys the CRM SPA + its Supabase stack. Coolify wires
+#  domains through its UI (docker_compose_domains), so we don't
+#  add Traefik labels manually — service names below are what
+#  Coolify maps to public hostnames.
 #
-#  Two separate SPA apps (each its own Dockerfile + nginx) behind
-#  a shared Coolify/Traefik reverse proxy that routes by hostname:
-#
-#    imbaproduction.com        → imba-marketing  (CMS + public site)
-#    crm.imbaproduction.com    → imba-crm        (AI CRM workspace)
-#
-#  Supabase stack is shared between the two.
+#  The marketing site (imbaproduction.com) and Imba Marketing
+#  (imbamarketing.com) are separate Coolify projects deployed
+#  from different repos — do NOT add them here.
 # ─────────────────────────────────────────────────────────────
 
 networks:
@@ -23,37 +23,7 @@ volumes:
 
 services:
 
-  # ── Marketing + CMS ────────────────────────────────────────
-  imba-marketing:
-    build:
-      context: .
-      dockerfile: packages/frontend/Dockerfile
-      args:
-        VITE_SUPABASE_URL: ${MARKETING_URL:-https://imbaproduction.com}/supabase
-        VITE_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-your-super-secret-anon-key}
-        VITE_APP_URL: ${MARKETING_URL:-https://imbaproduction.com}
-    container_name: imba-marketing
-    ports:
-      - '127.0.0.1:${MARKETING_PORT:-9102}:80'
-    networks:
-      - crm-net
-    depends_on:
-      - supabase-kong
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.imba-marketing.rule=Host(`imbaproduction.com`) || Host(`www.imbaproduction.com`)"
-      - "traefik.http.routers.imba-marketing.entrypoints=websecure"
-      - "traefik.http.routers.imba-marketing.tls.certresolver=letsencrypt"
-      - "traefik.http.services.imba-marketing.loadbalancer.server.port=80"
-    healthcheck:
-      test: ['CMD', 'wget', '-qO-', 'http://localhost/health']
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-    restart: unless-stopped
-
-  # ── CRM ────────────────────────────────────────────────────
+  # ── CRM SPA (crm.imbaproduction.com) ──────────────────────
   imba-crm:
     build:
       context: .
@@ -63,18 +33,12 @@ services:
         VITE_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-your-super-secret-anon-key}
         VITE_APP_URL: ${CRM_URL:-https://crm.imbaproduction.com}
     container_name: imba-crm
-    ports:
-      - '127.0.0.1:${CRM_PORT:-9103}:80'
+    expose:
+      - '80'
     networks:
       - crm-net
     depends_on:
       - supabase-kong
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.imba-crm.rule=Host(`crm.imbaproduction.com`)"
-      - "traefik.http.routers.imba-crm.entrypoints=websecure"
-      - "traefik.http.routers.imba-crm.tls.certresolver=letsencrypt"
-      - "traefik.http.services.imba-crm.loadbalancer.server.port=80"
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://localhost/health']
       interval: 30s
