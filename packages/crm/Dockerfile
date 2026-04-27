@@ -8,10 +8,13 @@ RUN corepack enable && corepack prepare pnpm@10 --activate
 WORKDIR /app
 
 FROM base AS deps
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc* ./
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/crm/package.json ./packages/crm/
-RUN pnpm install --filter ./packages/crm... --frozen-lockfile=false
+# Filter to the CRM package and all its workspace dependencies (@imba/shared).
+# Use the named-package form because the path form with trailing "..." is
+# inconsistent across pnpm versions.
+RUN pnpm install --filter "@imba/crm..." --no-frozen-lockfile
 
 FROM deps AS build
 ARG VITE_SUPABASE_URL
