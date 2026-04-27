@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "yjs": "HOST=0.0.0.0 PORT=1234 YPERSISTENCE=./.yjs npx y-websocket",
-    "build": "tsc && vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
