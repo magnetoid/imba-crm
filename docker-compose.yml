@@ -64,9 +64,27 @@ services:
     restart: unless-stopped
 
   # ── Supabase: Postgres ────────────────────────────────────
+  # supabase-db-perms fixes the volume ownership before postgres
+  # starts. supabase/postgres runs as uid 999; if the volume gets
+  # recreated by Coolify it ends up owned by root and pg fails to
+  # write its lockfile, so pg_isready never returns ready.
+  supabase-db-perms:
+    image: alpine:3.20
+    container_name: supabase-db-perms
+    restart: 'no'
+    user: '0:0'
+    command: ['sh', '-c', 'chown -R 999:999 /var/lib/postgresql/data || true']
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - crm-net
+
   supabase-db:
     image: 'supabase/postgres:15.1.0.147'
     container_name: supabase-db
+    depends_on:
+      supabase-db-perms:
+        condition: service_completed_successfully
     environment:
       POSTGRES_DB: '${POSTGRES_DB:-postgres}'
       POSTGRES_USER: '${POSTGRES_USER:-supabase}'
