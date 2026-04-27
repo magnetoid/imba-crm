@@ -10,6 +10,11 @@ version: '3.9'
 #  The marketing site (imbaproduction.com) and Imba Marketing
 #  (imbamarketing.com) are separate Coolify projects deployed
 #  from different repos — do NOT add them here.
+#
+#  We deliberately use start-order depends_on (no condition:
+#  service_healthy) so a sick supabase-db doesn't pin the whole
+#  deploy to "failed" — the CRM SPA is independently useful and
+#  Coolify can stream postgres logs once *something* is running.
 # ─────────────────────────────────────────────────────────────
 
 networks:
@@ -37,8 +42,6 @@ services:
       - '80'
     networks:
       - crm-net
-    depends_on:
-      - supabase-kong
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://localhost/health']
       interval: 30s
@@ -47,7 +50,7 @@ services:
       start_period: 15s
     restart: unless-stopped
 
-  # ── Redis (rate limiting / sessions for Edge Functions) ───
+  # ── Redis ─────────────────────────────────────────────────
   supabase-redis:
     image: redis:7-alpine
     container_name: supabase-redis
@@ -63,11 +66,10 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # ── Supabase: Postgres ────────────────────────────────────
-  # supabase-db-perms fixes the volume ownership before postgres
-  # starts. supabase/postgres runs as uid 999; if the volume gets
-  # recreated by Coolify it ends up owned by root and pg fails to
-  # write its lockfile, so pg_isready never returns ready.
+  # ── Postgres volume ownership fixer ───────────────────────
+  # supabase/postgres runs as uid 999. If Coolify recreates the
+  # volume it can end up owned by root; this init container fixes
+  # it before postgres starts, then exits.
   supabase-db-perms:
     image: alpine:3.20
     container_name: supabase-db-perms
@@ -83,8 +85,7 @@ services:
     image: 'supabase/postgres:15.1.0.147'
     container_name: supabase-db
     depends_on:
-      supabase-db-perms:
-        condition: service_completed_successfully
+      - supabase-db-perms
     environment:
       POSTGRES_DB: '${POSTGRES_DB:-postgres}'
       POSTGRES_USER: '${POSTGRES_USER:-supabase}'
@@ -96,11 +97,6 @@ services:
     networks:
       - crm-net
     healthcheck:
-      # Check the postmaster is accepting connections. Don't pass -U/-d
-      # because the role/db that lives in PGDATA may have been initdb'd
-      # with different env (e.g. POSTGRES_USER=agencycrm vs supabase),
-      # and pg_isready returns non-zero if the role doesn't exist even
-      # though the server is up.
       test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -p 5432']
       interval: 10s
       timeout: 5s
@@ -112,8 +108,7 @@ services:
     image: 'postgrest/postgrest:v12.0.2'
     container_name: supabase-rest
     depends_on:
-      supabase-db:
-        condition: service_healthy
+      - supabase-db
     networks:
       - crm-net
     environment:
@@ -130,14 +125,12 @@ services:
     image: 'supabase/gotrue:v2.143.0'
     container_name: supabase-auth
     depends_on:
-      supabase-db:
-        condition: service_healthy
+      - supabase-db
     networks:
       - crm-net
     environment:
       GOTRUE_API_HOST: 0.0.0.0
       GOTRUE_API_PORT: 9999
-      # Both apps share the same auth server; allow redirects to both domains.
       API_EXTERNAL_URL: '${CRM_URL:-https://crm.imbaproduction.com}/supabase'
       GOTRUE_DB_DRIVER: postgres
       GOTRUE_DB_DATABASE_URL: 'postgres://${POSTGRES_USER:-supabase}:${POSTGRES_PASSWORD:-coolifypassword}@supabase-db:5432/${POSTGRES_DB:-postgres}?search_path=auth'
@@ -157,10 +150,8 @@ services:
     image: 'supabase/storage-api:v0.46.4'
     container_name: supabase-storage
     depends_on:
-      supabase-db:
-        condition: service_healthy
-      supabase-rest:
-        condition: service_started
+      - supabase-db
+      - supabase-rest
     networks:
       - crm-net
     volumes:
@@ -202,16 +193,15 @@ services:
       DASHBOARD_PASSWORD: '${DASHBOARD_PASSWORD:-changeme_dashboard}'
     volumes:
       - ./supabase/kong.yml:/var/lib/kong/kong.yml:ro
-    ports:
-      - '127.0.0.1:${KONG_PORT:-8000}:8000'
+    expose:
+      - '8000'
     restart: unless-stopped
 
   supabase-meta:
     image: 'supabase/postgres-meta:v0.75.0'
     container_name: supabase-meta
     depends_on:
-      supabase-db:
-        condition: service_healthy
+      - supabase-db
     networks:
       - crm-net
     environment:
@@ -240,6 +230,6 @@ services:
       SUPABASE_PUBLIC_URL: '${CRM_URL:-https://crm.imbaproduction.com}/supabase'
       SUPABASE_ANON_KEY: '${SUPABASE_ANON_KEY:-your-super-secret-anon-key}'
       SUPABASE_SERVICE_KEY: '${SUPABASE_SERVICE_KEY:-your-super-secret-service-key}'
-    ports:
-      - '127.0.0.1:${STUDIO_PORT:-3000}:3000'
+    expose:
+      - '3000'
     restart: unless-stopped
