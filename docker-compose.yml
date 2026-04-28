@@ -236,9 +236,10 @@ services:
       DEFAULT_ORGANIZATION_NAME: 'Imba CRM'
       DEFAULT_PROJECT_NAME: 'imba-crm'
       SUPABASE_URL: 'http://supabase-kong:8000'
-      SUPABASE_PUBLIC_URL: '${CRM_URL:-https://crm.imbaproduction.com}/supabase'
+      SUPABASE_PUBLIC_URL: 'https://crm-studio.imbaproduction.com'
       SUPABASE_ANON_KEY: '${SUPABASE_ANON_KEY:-your-anon-key}'
       SUPABASE_SERVICE_KEY: '${SUPABASE_SERVICE_KEY:-your-service-key}'
-    expose:
-      - '3000'
+    # Plesk vhost crm-studio.imbaproduction.com proxies to this port.
+    ports:
+      - '127.0.0.1:9114:3000'
     restart: unless-stopped
