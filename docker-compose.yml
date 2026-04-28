@@ -26,8 +26,12 @@ services:
         VITE_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-your-super-secret-anon-key}
         VITE_APP_URL: ${CRM_URL:-https://crm.imbaproduction.com}
     container_name: imba-crm
-    expose:
-      - '80'
+    # Plesk's vhost for crm.imbaproduction.com proxies to this port
+    # (see /var/www/vhosts/system/crm.imbaproduction.com/conf/vhost_nginx.conf
+    # on tetra.imbamarketing.com). 9103 was already taken by the
+    # imbaproduction-web-app PostgREST container, hence 9108.
+    ports:
+      - '127.0.0.1:9108:80'
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://localhost/health']
       interval: 30s
