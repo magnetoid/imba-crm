@@ -146,7 +146,7 @@ services:
       GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
       GOTRUE_JWT_EXP: '${JWT_EXPIRY:-3600}'
       GOTRUE_JWT_SECRET: '${JWT_SECRET:-your-super-secret-jwt-key-min-32-chars}'
-      GOTRUE_EXTERNAL_EMAIL_ENABLED: 'false'
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: 'true'
       GOTRUE_MAILER_AUTOCONFIRM: 'true'
     restart: unless-stopped
 
