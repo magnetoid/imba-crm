@@ -77,7 +77,10 @@ services:
       JWT_SECRET: '${JWT_SECRET:-your-super-secret-jwt-key-min-32-chars}'
     volumes:
       - crm_postgres_data:/var/lib/postgresql/data
-      - ./supabase/roles.sql:/docker-entrypoint-initdb.d/00-roles.sql:ro
+      # roles.sql ran BEFORE supabase's own migrate.sh and aborted init
+      # because it tries to ALTER non-existent users (authenticator etc.).
+      # Skip it — the supabase/postgres image creates and password-protects
+      # those roles itself via JWT_SECRET.
     networks:
       - crm-net
     healthcheck:
@@ -195,7 +198,11 @@ services:
       DASHBOARD_USERNAME: '${DASHBOARD_USERNAME:-admin}'
       DASHBOARD_PASSWORD: '${DASHBOARD_PASSWORD:-changeme_dashboard}'
     volumes:
-      - ./supabase/kong.yml:/var/lib/kong/kong.yml:ro
+      # Coolify renders the compose to /artifacts/<deploy>/ and runs from
+      # there, so a relative './supabase/kong.yml' resolves to a missing
+      # path — Docker would then create a directory in its place. Use the
+      # absolute clone path Coolify checked the repo out at.
+      - /data/coolify/applications/gofuebf6cxfjglkgko187qph/supabase/kong.yml:/var/lib/kong/kong.yml:ro
     restart: unless-stopped
 
   supabase-meta:
