@@ -41,12 +41,18 @@ export interface CRMRuntimeSettings {
   imap_username: string
   imap_folder: string
   imap_poll_seconds: number
+  imap_last_success_at?: string | null
+  imap_last_error?: string | null
+  imap_last_error_at?: string | null
   pop3_enabled: boolean
   pop3_host: string
   pop3_port: string
   pop3_secure: boolean
   pop3_username: string
   pop3_leave_on_server: boolean
+  pop3_last_success_at?: string | null
+  pop3_last_error?: string | null
+  pop3_last_error_at?: string | null
   ai_outreach_tone: string
   ai_auto_enrich: boolean
   ai_inbox_auto_categorize: boolean
@@ -95,12 +101,18 @@ export const DEFAULT_CRM_RUNTIME_SETTINGS: CRMRuntimeSettings = {
   imap_username: '',
   imap_folder: 'INBOX',
   imap_poll_seconds: 60,
+  imap_last_success_at: null,
+  imap_last_error: null,
+  imap_last_error_at: null,
   pop3_enabled: false,
   pop3_host: '',
   pop3_port: '995',
   pop3_secure: true,
   pop3_username: '',
   pop3_leave_on_server: true,
+  pop3_last_success_at: null,
+  pop3_last_error: null,
+  pop3_last_error_at: null,
   ai_outreach_tone: 'professional',
   ai_auto_enrich: true,
   ai_inbox_auto_categorize: true,

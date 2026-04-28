@@ -26,6 +26,57 @@ const providerMeta: Array<{
   { provider: 'ollama', label: 'Ollama', modelKey: 'ollama_model', modelsKey: 'ollama_models', endpointKey: 'ollama_base_url', placeholder: 'llama3.1' },
 ]
 
+function timeAgo(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000))
+  if (seconds < 60)   return `${seconds}s ago`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
+  return `${Math.floor(seconds / 86400)}d ago`
+}
+
+function PollStatus({
+  enabled, lastSuccessAt, lastError, lastErrorAt, label,
+}: {
+  enabled: boolean
+  lastSuccessAt: string | null | undefined
+  lastError: string | null | undefined
+  lastErrorAt: string | null | undefined
+  label: string
+}) {
+  if (!enabled) {
+    return (
+      <div className="text-xs text-muted-foreground border border-border rounded p-2.5">
+        {label} polling is disabled. Toggle it on and click Save to start.
+      </div>
+    )
+  }
+  if (lastError) {
+    return (
+      <div className="text-xs text-red-400 border border-red-400/30 bg-red-500/5 rounded p-2.5 flex items-start gap-2">
+        <AlertCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+        <div>
+          <div className="font-medium">{label} poll failed{lastErrorAt ? ` (${timeAgo(lastErrorAt)})` : ''}</div>
+          <div className="opacity-90 break-words">{lastError}</div>
+        </div>
+      </div>
+    )
+  }
+  if (lastSuccessAt) {
+    return (
+      <div className="text-xs text-emerald-400 border border-emerald-400/30 bg-emerald-500/5 rounded p-2.5 flex items-center gap-2">
+        <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0" />
+        <span>{label} polling OK — last success {timeAgo(lastSuccessAt)}</span>
+      </div>
+    )
+  }
+  return (
+    <div className="text-xs text-muted-foreground border border-border rounded p-2.5">
+      Waiting for first {label} poll cycle… (next within poll-interval seconds)
+    </div>
+  )
+}
+
 export default function AISettings() {
   const [settings, setSettings] = useState<CRMRuntimeSettings>(DEFAULT_CRM_RUNTIME_SETTINGS)
   const [providerStatuses, setProviderStatuses] = useState<Record<string, boolean>>({})
@@ -412,10 +463,18 @@ export default function AISettings() {
           <div className="flex flex-col gap-1.5"><Label>Folder</Label><Input value={settings.imap_folder} onChange={e => setField('imap_folder', e.target.value)} placeholder="INBOX" /></div>
           <div className="flex flex-col gap-1.5"><Label>Poll interval (s)</Label><Input type="number" value={settings.imap_poll_seconds} onChange={e => setField('imap_poll_seconds', parseInt(e.target.value || '60', 10))} placeholder="60" /></div>
         </div>
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center gap-2 mb-4">
           <Switch checked={settings.imap_secure} onCheckedChange={v => setField('imap_secure', v)} />
           <Label className="font-normal">Use SSL/TLS (port 993)</Label>
         </div>
+
+        <PollStatus
+          enabled={settings.imap_enabled}
+          lastSuccessAt={settings.imap_last_success_at}
+          lastError={settings.imap_last_error}
+          lastErrorAt={settings.imap_last_error_at}
+          label="IMAP"
+        />
       </section>
 
       <Separator className="mb-10" />
@@ -450,7 +509,7 @@ export default function AISettings() {
             <p className="text-[10px] text-muted-foreground">{providerStatuses['pop3'] ? 'Password configured.' : 'Password missing.'}</p>
           </div>
         </div>
-        <div className="flex items-center gap-4 mb-2">
+        <div className="flex items-center gap-4 mb-4">
           <div className="flex items-center gap-2">
             <Switch checked={settings.pop3_secure} onCheckedChange={v => setField('pop3_secure', v)} />
             <Label className="font-normal">Use SSL/TLS</Label>
@@ -460,6 +519,14 @@ export default function AISettings() {
             <Label className="font-normal">Leave messages on server</Label>
           </div>
         </div>
+
+        <PollStatus
+          enabled={settings.pop3_enabled}
+          lastSuccessAt={settings.pop3_last_success_at}
+          lastError={settings.pop3_last_error}
+          lastErrorAt={settings.pop3_last_error_at}
+          label="POP3"
+        />
       </section>
 
       <Separator className="mb-10" />
