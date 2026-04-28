@@ -8,7 +8,7 @@ import { Switch } from '@imba/shared/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@imba/shared/ui/select'
 import { Separator } from '@imba/shared/ui/separator'
 import toast from 'react-hot-toast'
-import { Settings, Loader2, CheckCircle2, AlertCircle, Mail, Save, Eye, EyeOff, Zap, RefreshCw, BrainCircuit } from 'lucide-react'
+import { Settings, Loader2, CheckCircle2, AlertCircle, Mail, Save, Eye, EyeOff, Zap, RefreshCw, BrainCircuit, Inbox } from 'lucide-react'
 
 const providerMeta: Array<{
   provider: AIProvider
@@ -375,6 +375,90 @@ export default function AISettings() {
         <div className="flex gap-2">
           <Button onClick={() => void saveAll()} disabled={saving} className="gap-2">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save settings</Button>
           <Button variant="outline" onClick={testSmtp} disabled={testingSmtp || !settings.smtp_host || !settings.smtp_username} className="gap-2">{testingSmtp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />} Test SMTP</Button>
+        </div>
+      </section>
+
+      <Separator className="mb-10" />
+
+      {/* ── Inbound mail (IMAP) ─────────────────────────────────── */}
+      <section className="mb-10">
+        <div className="flex items-center gap-2 mb-1">
+          <Inbox className="h-4 w-4 text-amber-500" />
+          <h2 className="font-medium">IMAP (inbound mail → Inbox)</h2>
+        </div>
+        <p className="text-xs text-muted-foreground mb-5">
+          The inbox-puller container reads new messages from this mailbox and writes them to the CRM Inbox. Password is stored in <code>crm_provider_credentials</code> with provider = <code>imap</code>.
+        </p>
+
+        <div className="flex items-center gap-2 mb-5">
+          <Switch checked={settings.imap_enabled} onCheckedChange={v => setField('imap_enabled', v)} />
+          <Label className="font-normal">Enable IMAP polling</Label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <div className="flex flex-col gap-1.5"><Label>IMAP Host</Label><Input value={settings.imap_host} onChange={e => setField('imap_host', e.target.value)} placeholder="imap.gmail.com" /></div>
+          <div className="flex flex-col gap-1.5"><Label>Port</Label><Input value={settings.imap_port} onChange={e => setField('imap_port', e.target.value)} placeholder="993" /></div>
+          <div className="flex flex-col gap-1.5"><Label>Username</Label><Input value={settings.imap_username} onChange={e => setField('imap_username', e.target.value)} placeholder="hi@imbaproduction.com" /></div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Password / App password</Label>
+            <Input
+              type="password"
+              value={secretValues['imap_api_key'] ?? ''}
+              onChange={e => setSecretValues(prev => ({ ...prev, imap_api_key: e.target.value }))}
+              placeholder={providerStatuses['imap'] ? '•••••••• (Set)' : 'Enter IMAP password'}
+            />
+            <p className="text-[10px] text-muted-foreground">{providerStatuses['imap'] ? 'Password configured. Enter a new one to replace it.' : 'Password missing.'}</p>
+          </div>
+          <div className="flex flex-col gap-1.5"><Label>Folder</Label><Input value={settings.imap_folder} onChange={e => setField('imap_folder', e.target.value)} placeholder="INBOX" /></div>
+          <div className="flex flex-col gap-1.5"><Label>Poll interval (s)</Label><Input type="number" value={settings.imap_poll_seconds} onChange={e => setField('imap_poll_seconds', parseInt(e.target.value || '60', 10))} placeholder="60" /></div>
+        </div>
+        <div className="flex items-center gap-2 mb-2">
+          <Switch checked={settings.imap_secure} onCheckedChange={v => setField('imap_secure', v)} />
+          <Label className="font-normal">Use SSL/TLS (port 993)</Label>
+        </div>
+      </section>
+
+      <Separator className="mb-10" />
+
+      {/* ── Inbound mail (POP3 — fallback for legacy hosts) ──────── */}
+      <section className="mb-10">
+        <div className="flex items-center gap-2 mb-1">
+          <Inbox className="h-4 w-4 text-amber-500/60" />
+          <h2 className="font-medium">POP3 (inbound mail — fallback)</h2>
+        </div>
+        <p className="text-xs text-muted-foreground mb-5">
+          Use only if your host doesn't support IMAP. POP3 has no folders and no per-message flags — read-state is tracked locally by UIDL. Password lives in <code>crm_provider_credentials</code> with provider = <code>pop3</code>.
+        </p>
+
+        <div className="flex items-center gap-2 mb-5">
+          <Switch checked={settings.pop3_enabled} onCheckedChange={v => setField('pop3_enabled', v)} />
+          <Label className="font-normal">Enable POP3 polling</Label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <div className="flex flex-col gap-1.5"><Label>POP3 Host</Label><Input value={settings.pop3_host} onChange={e => setField('pop3_host', e.target.value)} placeholder="pop.example.com" /></div>
+          <div className="flex flex-col gap-1.5"><Label>Port</Label><Input value={settings.pop3_port} onChange={e => setField('pop3_port', e.target.value)} placeholder="995" /></div>
+          <div className="flex flex-col gap-1.5"><Label>Username</Label><Input value={settings.pop3_username} onChange={e => setField('pop3_username', e.target.value)} /></div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Password</Label>
+            <Input
+              type="password"
+              value={secretValues['pop3_api_key'] ?? ''}
+              onChange={e => setSecretValues(prev => ({ ...prev, pop3_api_key: e.target.value }))}
+              placeholder={providerStatuses['pop3'] ? '•••••••• (Set)' : 'Enter POP3 password'}
+            />
+            <p className="text-[10px] text-muted-foreground">{providerStatuses['pop3'] ? 'Password configured.' : 'Password missing.'}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-4 mb-2">
+          <div className="flex items-center gap-2">
+            <Switch checked={settings.pop3_secure} onCheckedChange={v => setField('pop3_secure', v)} />
+            <Label className="font-normal">Use SSL/TLS</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch checked={settings.pop3_leave_on_server} onCheckedChange={v => setField('pop3_leave_on_server', v)} />
+            <Label className="font-normal">Leave messages on server</Label>
+          </div>
         </div>
       </section>
 

@@ -91,6 +91,26 @@ services:
       start_period: 120s
     restart: unless-stopped
 
+  # ── Inbox puller ──────────────────────────────────────────
+  # Polls IMAP/POP3 according to crm_runtime_settings (id=1) and
+  # writes new messages to public.crm_inbox_messages. Disabled by
+  # default — flip imap_enabled / pop3_enabled in Settings + put
+  # the password in crm_provider_credentials (provider='imap'/'pop3').
+  inbox-puller:
+    build:
+      context: .
+      dockerfile: packages/inbox-puller/Dockerfile
+    container_name: imba-crm-inbox-puller
+    depends_on:
+      - supabase-rest
+    networks:
+      - crm-net
+    environment:
+      # Talk to kong on the internal docker network (no SSL, no Plesk hop).
+      SUPABASE_URL: http://supabase-kong:8000
+      SUPABASE_SERVICE_KEY: '${SUPABASE_SERVICE_KEY:-}'
+    restart: unless-stopped
+
   supabase-redis:
     image: 'redis:7.2-alpine'
     container_name: imba-crm-redis

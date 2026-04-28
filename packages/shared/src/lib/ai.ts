@@ -34,6 +34,19 @@ export interface CRMRuntimeSettings {
   smtp_username: string
   smtp_from_name: string
   smtp_from_email: string
+  imap_enabled: boolean
+  imap_host: string
+  imap_port: string
+  imap_secure: boolean
+  imap_username: string
+  imap_folder: string
+  imap_poll_seconds: number
+  pop3_enabled: boolean
+  pop3_host: string
+  pop3_port: string
+  pop3_secure: boolean
+  pop3_username: string
+  pop3_leave_on_server: boolean
   ai_outreach_tone: string
   ai_auto_enrich: boolean
   ai_inbox_auto_categorize: boolean
@@ -75,6 +88,19 @@ export const DEFAULT_CRM_RUNTIME_SETTINGS: CRMRuntimeSettings = {
   smtp_username: '',
   smtp_from_name: 'Imba Production',
   smtp_from_email: '',
+  imap_enabled: false,
+  imap_host: '',
+  imap_port: '993',
+  imap_secure: true,
+  imap_username: '',
+  imap_folder: 'INBOX',
+  imap_poll_seconds: 60,
+  pop3_enabled: false,
+  pop3_host: '',
+  pop3_port: '995',
+  pop3_secure: true,
+  pop3_username: '',
+  pop3_leave_on_server: true,
   ai_outreach_tone: 'professional',
   ai_auto_enrich: true,
   ai_inbox_auto_categorize: true,
