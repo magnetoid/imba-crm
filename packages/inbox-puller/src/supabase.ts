@@ -41,7 +41,7 @@ export async function getRuntimeSettings(): Promise<RuntimeSettings | null> {
   return data as RuntimeSettings | null
 }
 
-export async function getProviderSecret(provider: 'imap' | 'pop3'): Promise<string | null> {
+export async function getProviderSecret(provider: 'imap' | 'pop3' | 'smtp'): Promise<string | null> {
   // service_role can read crm_provider_credentials directly (RLS allows it)
   const { data, error } = await supabase
     .from('crm_provider_credentials')

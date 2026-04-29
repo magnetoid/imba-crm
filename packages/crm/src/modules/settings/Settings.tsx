@@ -146,33 +146,60 @@ export default function AISettings() {
     return true
   }
 
-  async function testSmtp() {
-    if (!settings.smtp_from_email) {
-      toast.error('Set a from email first')
-      return
+  async function callTestEndpoint(kind: 'smtp' | 'imap' | 'pop3', enteredPassword?: string): Promise<{ ok: boolean; message: string }> {
+    const session = await supabase.auth.getSession()
+    const token = session.data.session?.access_token
+    if (!token) return { ok: false, message: 'Not signed in.' }
+    const res = await fetch(`/api/worker/test/${kind}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(enteredPassword ? { password: enteredPassword } : {}),
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      return { ok: false, message: `HTTP ${res.status}: ${text.slice(0, 200)}` }
     }
+    return await res.json() as { ok: boolean; message: string }
+  }
+
+  async function testSmtp() {
     const saved = await saveAll()
     if (!saved) return
     setTestingSmtp(true)
     setSmtpTestResult(null)
-    try {
-      const { error } = await supabase.functions.invoke('send-email', {
-        body: {
-          to: settings.smtp_from_email,
-          to_name: settings.smtp_from_name,
-          subject: 'SMTP Test — Imba CRM',
-          body: 'If you received this, your SMTP runtime settings are working correctly.',
-        },
-      })
-      if (error) throw error
-      setSmtpTestResult({ ok: true, message: 'Test email sent successfully.' })
-      toast.success('SMTP test passed')
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'SMTP test failed'
-      setSmtpTestResult({ ok: false, message })
-      toast.error(message)
-    }
+    const result = await callTestEndpoint('smtp', secretValues['smtp_password'])
+    setSmtpTestResult(result)
+    if (result.ok) toast.success('SMTP login OK'); else toast.error(result.message)
     setTestingSmtp(false)
+  }
+
+  const [testingImap, setTestingImap] = useState(false)
+  const [imapTestResult, setImapTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+  async function testImap() {
+    const saved = await saveAll()
+    if (!saved) return
+    setTestingImap(true)
+    setImapTestResult(null)
+    const result = await callTestEndpoint('imap', secretValues['imap_api_key'])
+    setImapTestResult(result)
+    if (result.ok) toast.success('IMAP login OK'); else toast.error(result.message)
+    setTestingImap(false)
+  }
+
+  const [testingPop3, setTestingPop3] = useState(false)
+  const [pop3TestResult, setPop3TestResult] = useState<{ ok: boolean; message: string } | null>(null)
+  async function testPop3() {
+    const saved = await saveAll()
+    if (!saved) return
+    setTestingPop3(true)
+    setPop3TestResult(null)
+    const result = await callTestEndpoint('pop3', secretValues['pop3_api_key'])
+    setPop3TestResult(result)
+    if (result.ok) toast.success('POP3 login OK'); else toast.error(result.message)
+    setTestingPop3(false)
   }
 
   const setField = <K extends keyof CRMRuntimeSettings>(key: K, value: CRMRuntimeSettings[K]) => {
@@ -475,6 +502,17 @@ export default function AISettings() {
           lastErrorAt={settings.imap_last_error_at}
           label="IMAP"
         />
+
+        {imapTestResult && (
+          <div className={`mt-3 flex items-center gap-2 text-sm p-3 rounded ${imapTestResult.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+            {imapTestResult.ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+            {imapTestResult.message}
+          </div>
+        )}
+        <div className="flex gap-2 mt-3">
+          <Button onClick={() => void saveAll()} disabled={saving} className="gap-2">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save settings</Button>
+          <Button variant="outline" onClick={testImap} disabled={testingImap || !settings.imap_host || !settings.imap_username} className="gap-2">{testingImap ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />} Test IMAP</Button>
+        </div>
       </section>
 
       <Separator className="mb-10" />
@@ -527,6 +565,17 @@ export default function AISettings() {
           lastErrorAt={settings.pop3_last_error_at}
           label="POP3"
         />
+
+        {pop3TestResult && (
+          <div className={`mt-3 flex items-center gap-2 text-sm p-3 rounded ${pop3TestResult.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+            {pop3TestResult.ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+            {pop3TestResult.message}
+          </div>
+        )}
+        <div className="flex gap-2 mt-3">
+          <Button onClick={() => void saveAll()} disabled={saving} className="gap-2">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save settings</Button>
+          <Button variant="outline" onClick={testPop3} disabled={testingPop3 || !settings.pop3_host || !settings.pop3_username} className="gap-2">{testingPop3 ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />} Test POP3</Button>
+        </div>
       </section>
 
       <Separator className="mb-10" />

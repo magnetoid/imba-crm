@@ -1,6 +1,8 @@
 import { getRuntimeSettings } from './supabase.js'
 import { pollImap } from './imap.js'
 import { pollPop3 } from './pop3.js'
+import { pollOutreach } from './send-email.js'
+import { startHttpServer } from './server.js'
 
 function log(level: 'info' | 'warn' | 'error', msg: string, extra: Record<string, unknown> = {}) {
   console.log(JSON.stringify({ level, msg, source: 'inbox-puller', ...extra, time: new Date().toISOString() }))
@@ -21,11 +23,12 @@ async function tick(): Promise<number> {
     return DEFAULT_INTERVAL_S
   }
 
-  // Run IMAP and POP3 in parallel; users typically only enable one of the two
-  // but this avoids a stuck IMAP poll blocking POP3 (and vice versa).
+  // Run IMAP, POP3, and the SMTP outbox in parallel; they're independent and
+  // a stuck call on one shouldn't block the others.
   await Promise.allSettled([
     pollImap(settings),
     pollPop3(settings),
+    pollOutreach(),
   ])
 
   const requested = settings.imap_poll_seconds || DEFAULT_INTERVAL_S
@@ -36,7 +39,12 @@ async function main() {
   log('info', 'inbox-puller started', {
     supabase_url: process.env.SUPABASE_URL,
     has_service_key: !!process.env.SUPABASE_SERVICE_KEY,
+    track_base: process.env.TRACK_BASE_URL,
+    has_jwt_secret: !!process.env.JWT_SECRET,
   })
+
+  // HTTP surface (tracking endpoints + connection-test RPCs).
+  startHttpServer()
 
   while (!stopping) {
     const start = Date.now()

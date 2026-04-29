@@ -109,6 +109,15 @@ services:
       # Talk to kong on the internal docker network (no SSL, no Plesk hop).
       SUPABASE_URL: http://supabase-kong:8000
       SUPABASE_SERVICE_KEY: '${SUPABASE_SERVICE_KEY:-}'
+      # Public base URL used to construct open-pixel + click-redirect links
+      # inside outbound emails. Must hit the SPA's nginx (which proxies
+      # /track/* to this worker on port 3030).
+      TRACK_BASE_URL: '${CRM_URL:-https://crm.imbaproduction.com}'
+      # Used to verify the user-session JWT on /api/worker/test/* endpoints.
+      JWT_SECRET: '${JWT_SECRET:-}'
+      WORKER_HTTP_PORT: '3030'
+    expose:
+      - '3030'
     restart: unless-stopped
 
   supabase-redis:

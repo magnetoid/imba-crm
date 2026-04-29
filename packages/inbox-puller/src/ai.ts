@@ -18,12 +18,15 @@ interface AISettings {
   ollama_base_url: string
   ollama_model: string
   ai_inbox_auto_categorize: boolean
+  scheduling_url: string
+  company_name: string
+  ai_outreach_tone: string
 }
 
 export async function getAISettings(): Promise<AISettings | null> {
   const { data, error } = await supabase
     .from('crm_runtime_settings')
-    .select('active_ai_provider, active_ai_model, anthropic_model, openai_model, gemini_model, perplexity_model, ollama_base_url, ollama_model, ai_inbox_auto_categorize')
+    .select('active_ai_provider, active_ai_model, anthropic_model, openai_model, gemini_model, perplexity_model, ollama_base_url, ollama_model, ai_inbox_auto_categorize, scheduling_url, company_name, ai_outreach_tone')
     .eq('id', 1)
     .maybeSingle()
   if (error || !data) return null
@@ -167,11 +170,24 @@ export async function categorizeInboundMessage(input: {
   subject: string | null
   body: string
 }): Promise<CategorizeResult | null> {
-  const userPrompt = `Analyze this inbound email to a sales/CRM and return JSON with three fields:
+  const settings = await getAISettings()
+  const schedulingUrl = (settings?.scheduling_url ?? '').trim()
+  const companyName = settings?.company_name?.trim() || 'our team'
+  const tone = settings?.ai_outreach_tone || 'professional'
+
+  // If a scheduling URL is configured, instruct the AI to embed it for
+  // meeting requests so the suggested reply ends with a concrete next step.
+  const meetingHint = schedulingUrl
+    ? `\nWhen category is "meeting_request" or "positive_reply", include the booking link ${schedulingUrl} verbatim in the suggested_reply (e.g. "You can grab a 30-min slot here: ${schedulingUrl}"). Don't paraphrase the URL.`
+    : `\nWhen category is "meeting_request", propose 2-3 concrete time slots in the next 5 business days (no calendar URL is configured).`
+
+  const userPrompt = `You are an assistant for ${companyName}. Tone: ${tone}.
+Analyze this inbound email and return JSON with three fields:
 
   category: one of "question" | "objection" | "meeting_request" | "positive_reply" | "unsubscribe" | "bounce" | "spam" | "other"
   sentiment: one of "positive" | "neutral" | "negative"
   suggested_reply: a draft reply (3-6 sentences, polite, concrete next step)
+${meetingHint}
 
 From: ${input.from_email ?? 'unknown'}
 Subject: ${input.subject ?? '(no subject)'}
