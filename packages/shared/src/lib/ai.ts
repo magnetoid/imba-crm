@@ -11,6 +11,8 @@ export interface AIRequestOptions {
   feature?: string
   lead_id?: string
   task_type?: string
+  prompt_key?: string
+  prompt_version?: number
 }
 
 export interface CRMRuntimeSettings {
@@ -205,6 +207,8 @@ export async function callAI<T = string>(prompt: string, options?: AIRequestOpti
       tokens_in: result.event?.tokensIn,
       tokens_out: result.event?.tokensOut,
       cost_cents: result.event?.costCents,
+      prompt_key: options?.prompt_key || null,
+      prompt_version: options?.prompt_version || null,
       status: (settings?.ai_cap_action === 'require_approval' && currentCost >= (settings.ai_monthly_cap_cents || 0)) ? 'draft' : 'logged',
       created_by: userRes.data.user?.id
     })
@@ -240,9 +244,24 @@ function normalizeStringArray(value: unknown): string[] {
 }
 
 export async function getCRMRuntimeSettings(): Promise<CRMRuntimeSettings> {
+  const safeColumns = [
+    'active_ai_provider', 'active_ai_model',
+    'anthropic_model', 'anthropic_models', 'anthropic_temperature',
+    'openai_model', 'openai_models',
+    'gemini_model', 'gemini_models',
+    'perplexity_model', 'perplexity_models',
+    'ollama_base_url', 'ollama_model', 'ollama_models',
+    'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_username',
+    'smtp_from_name', 'smtp_from_email',
+    'ai_outreach_tone', 'ai_auto_enrich', 'ai_inbox_auto_categorize',
+    'company_name', 'company_description', 'usp', 'scheduling_url',
+    'lead_sources_enabled', 'outreach_daily_limit',
+    'ai_monthly_cap_cents', 'ai_soft_cap_cents', 'ai_cap_action'
+  ].join(',')
+
   const { data, error } = await supabase
     .from('crm_runtime_settings')
-    .select('*')
+    .select(safeColumns)
     .eq('id', 1)
     .maybeSingle()
 

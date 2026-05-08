@@ -11,6 +11,7 @@ import { module as analytics } from './analytics'
 import { module as audit } from './audit'
 import { module as settings } from './settings'
 import { module as seo } from './seo'
+import { module as prompts } from './prompts'
 
 /**
  * Registered CRM modules. Adding a new feature is:
@@ -29,6 +30,7 @@ export const MODULES: CRMModule[] = [
   templates,
   analytics,
   audit,
+  prompts,
   settings,
   seo,
 ]

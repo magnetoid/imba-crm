@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@imba/shared/supabase'
 import { callAIJSON, callAIText } from '@imba/shared/lib/ai'
+import { getActivePrompt, interpolatePrompt } from '@imba/shared/lib/prompts'
 import { Button } from '@imba/shared/ui/button'
 import { Input } from '@imba/shared/ui/input'
 import { Label } from '@imba/shared/ui/label'
@@ -254,30 +255,25 @@ function AIContentBrief() {
   async function generate() {
     if (!topic.trim()) return
     setLoading(true)
-    const pageCtx = pagePath ? ` for the page at ${pagePath}` : ''
-    const prompt = `You are a senior SEO content strategist. Create a detailed content brief${pageCtx} about: "${topic}"
-Company context: ${COMPANY_CONTEXT}
-
-Return ONLY a valid JSON object with this structure:
-{
-  "h1": "Main headline",
-  "meta_title": "SEO title under 60 chars",
-  "meta_description": "Meta description 120-160 chars with CTA",
-  "target_keywords": ["primary keyword", "secondary keyword", ...5 keywords],
-  "outline": [
-    {"level":"h2","text":"Section heading"},
-    {"level":"h3","text":"Subsection"},
-    ...8-12 total headings
-  ],
-  "word_count": 1200,
-  "cta": "Call to action text",
-  "internal_links": ["/work", "/contact", ...]
-}`
     try {
-      const result = await callAIJSON<ContentBrief>(prompt, { maxTokens: 2000 })
+      const activePrompt = await getActivePrompt('seo_content_brief')
+      const interpolated = interpolatePrompt(activePrompt.user, {
+        pageCtx,
+        topic,
+        COMPANY_CONTEXT
+      })
+      
+      const fullPrompt = activePrompt.system ? `${activePrompt.system}\n\n${interpolated}` : interpolated
+      
+      const result = await callAIJSON<ContentBrief>(fullPrompt, { 
+        maxTokens: 2000,
+        prompt_key: activePrompt.key,
+        prompt_version: activePrompt.version
+      })
       if (result) { setBrief(result); toast.success('Content brief generated') }
       else toast.error('Failed to generate brief')
-    } catch {
+    } catch (err) {
+      console.error(err)
       toast.error('Failed to generate brief')
     }
     setLoading(false)
