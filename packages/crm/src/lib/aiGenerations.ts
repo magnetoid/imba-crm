@@ -9,6 +9,7 @@ export type AIFeature =
   | 'inbox_analyze'
   | 'inbox_reply_suggest'
   | 'analytics_insights'
+  | 'site_analyze'
 
 export type AITaskType =
   | 'reasoning'
