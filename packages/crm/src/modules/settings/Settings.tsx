@@ -6,7 +6,6 @@ import { Input } from '@imba/shared/ui/input'
 import { Label } from '@imba/shared/ui/label'
 import { Switch } from '@imba/shared/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@imba/shared/ui/select'
-import { Separator } from '@imba/shared/ui/separator'
 import toast from 'react-hot-toast'
 import { Settings, Loader2, CheckCircle2, AlertCircle, Mail, Save, Eye, EyeOff, Zap, RefreshCw, BrainCircuit, Inbox } from 'lucide-react'
 
@@ -24,6 +23,18 @@ const providerMeta: Array<{
   { provider: 'gemini', label: 'Gemini', modelKey: 'gemini_model', modelsKey: 'gemini_models', secretKey: 'gemini_api_key', placeholder: 'gemini-2.5-flash' },
   { provider: 'perplexity', label: 'Perplexity', modelKey: 'perplexity_model', modelsKey: 'perplexity_models', secretKey: 'perplexity_api_key', placeholder: 'sonar' },
   { provider: 'ollama', label: 'Ollama', modelKey: 'ollama_model', modelsKey: 'ollama_models', endpointKey: 'ollama_base_url', placeholder: 'llama3.1' },
+  { provider: 'openrouter', label: 'OpenRouter', modelKey: 'openrouter_model', modelsKey: 'openrouter_models', secretKey: 'openrouter_api_key', placeholder: 'anthropic/claude-sonnet-4' },
+]
+
+type SettingsTab = 'ai' | 'smtp' | 'imap' | 'pop3' | 'caps' | 'company'
+
+const TABS: Array<{ id: SettingsTab; label: string; description: string }> = [
+  { id: 'ai',      label: 'AI providers',  description: 'Models, keys, routing and outreach tone' },
+  { id: 'smtp',    label: 'Outbound mail', description: 'SMTP delivery for outreach + replies' },
+  { id: 'imap',    label: 'IMAP inbox',    description: 'Pull messages into the CRM via IMAP' },
+  { id: 'pop3',    label: 'POP3 inbox',    description: 'Alternative inbound mail polling' },
+  { id: 'caps',    label: 'Cost & limits', description: 'Monthly AI spend ceiling + cap action' },
+  { id: 'company', label: 'Company',       description: 'Brand context the AI uses in prompts' },
 ]
 
 function timeAgo(iso: string | null | undefined): string {
@@ -88,8 +99,21 @@ export default function AISettings() {
   const [testingSmtp, setTestingSmtp] = useState(false)
   const [fetchingProvider, setFetchingProvider] = useState<AIProvider | null>(null)
   const [smtpTestResult, setSmtpTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
+    if (typeof window === 'undefined') return 'ai'
+    const hash = window.location.hash.replace('#', '') as SettingsTab
+    return TABS.some(t => t.id === hash) ? hash : 'ai'
+  })
 
   useEffect(() => { void load() }, [])
+
+  // Sync active tab to URL hash so deep links into Settings work.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (window.location.hash !== `#${activeTab}`) {
+      window.history.replaceState(null, '', `#${activeTab}`)
+    }
+  }, [activeTab])
 
   const activeProviderMeta = useMemo(
     () => providerMeta.find(entry => entry.provider === settings.active_ai_provider) ?? providerMeta[0],
@@ -246,14 +270,38 @@ export default function AISettings() {
   if (loading) return <div className="flex justify-center items-center py-32"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
 
   return (
-    <div className="p-8 max-w-4xl mx-auto">
+    <div className="p-8 max-w-6xl mx-auto">
       <div className="flex items-center gap-3 mb-1">
-        <Settings className="h-5 w-5 text-amber-500" />
-        <h1 className="text-2xl font-semibold">CRM Settings</h1>
+        <Settings className="h-5 w-5 text-primary" />
+        <h1 className="text-2xl font-semibold tracking-tight">CRM Settings</h1>
       </div>
-      <p className="text-muted-foreground text-sm mb-10">Centralized runtime settings for AI providers, SMTP delivery and company context.</p>
+      <p className="text-muted-foreground text-sm mb-8">
+        Centralized runtime settings for AI providers, mail delivery, cost caps and company context.
+      </p>
 
-      <section className="mb-10">
+      <div className="grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)] gap-8">
+        {/* Left rail — section navigation */}
+        <nav className="lg:sticky lg:top-6 self-start space-y-1">
+          {TABS.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`w-full text-left rounded-md px-3 py-2 text-sm transition-colors ${
+                activeTab === tab.id
+                  ? 'bg-primary/10 text-primary font-medium'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+              }`}
+            >
+              <div>{tab.label}</div>
+              <div className="text-[11px] opacity-70 font-normal">{tab.description}</div>
+            </button>
+          ))}
+        </nav>
+
+        {/* Right pane — section bodies */}
+        <div>
+
+      {activeTab === 'ai' && <section className="mb-10">
         <div className="flex items-center gap-2 mb-1">
           <BrainCircuit className="h-4 w-4 text-amber-500" />
           <h2 className="font-medium">AI Runtime</h2>
@@ -407,13 +455,11 @@ export default function AISettings() {
             <Label className="font-normal">Auto-analyze inbox replies on open</Label>
           </div>
         </div>
-      </section>
+      </section>}
 
-      <Separator className="mb-10" />
-
-      <section className="mb-10">
+      {activeTab === 'smtp' && <section className="mb-10">
         <div className="flex items-center gap-2 mb-1">
-          <Mail className="h-4 w-4 text-amber-500" />
+          <Mail className="h-4 w-4 text-primary" />
           <h2 className="font-medium">SMTP Configuration</h2>
         </div>
         <p className="text-xs text-muted-foreground mb-5">Stored in the database and used only by the send-email Edge Function.</p>
@@ -454,14 +500,12 @@ export default function AISettings() {
           <Button onClick={() => void saveAll()} disabled={saving} className="gap-2">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save settings</Button>
           <Button variant="outline" onClick={testSmtp} disabled={testingSmtp || !settings.smtp_host || !settings.smtp_username} className="gap-2">{testingSmtp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />} Test SMTP</Button>
         </div>
-      </section>
-
-      <Separator className="mb-10" />
+      </section>}
 
       {/* ── Inbound mail (IMAP) ─────────────────────────────────── */}
-      <section className="mb-10">
+      {activeTab === 'imap' && <section className="mb-10">
         <div className="flex items-center gap-2 mb-1">
-          <Inbox className="h-4 w-4 text-amber-500" />
+          <Inbox className="h-4 w-4 text-primary" />
           <h2 className="font-medium">IMAP (inbound mail → Inbox)</h2>
         </div>
         <p className="text-xs text-muted-foreground mb-5">
@@ -513,14 +557,12 @@ export default function AISettings() {
           <Button onClick={() => void saveAll()} disabled={saving} className="gap-2">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save settings</Button>
           <Button variant="outline" onClick={testImap} disabled={testingImap || !settings.imap_host || !settings.imap_username} className="gap-2">{testingImap ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />} Test IMAP</Button>
         </div>
-      </section>
-
-      <Separator className="mb-10" />
+      </section>}
 
       {/* ── Inbound mail (POP3 — fallback for legacy hosts) ──────── */}
-      <section className="mb-10">
+      {activeTab === 'pop3' && <section className="mb-10">
         <div className="flex items-center gap-2 mb-1">
-          <Inbox className="h-4 w-4 text-amber-500/60" />
+          <Inbox className="h-4 w-4 text-muted-foreground" />
           <h2 className="font-medium">POP3 (inbound mail — fallback)</h2>
         </div>
         <p className="text-xs text-muted-foreground mb-5">
@@ -576,13 +618,11 @@ export default function AISettings() {
           <Button onClick={() => void saveAll()} disabled={saving} className="gap-2">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save settings</Button>
           <Button variant="outline" onClick={testPop3} disabled={testingPop3 || !settings.pop3_host || !settings.pop3_username} className="gap-2">{testingPop3 ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />} Test POP3</Button>
         </div>
-      </section>
+      </section>}
 
-      <Separator className="mb-10" />
-
-      <section className="mb-10">
+      {activeTab === 'caps' && <section className="mb-10">
         <div className="flex items-center gap-2 mb-1">
-          <BrainCircuit className="h-4 w-4 text-amber-500" />
+          <BrainCircuit className="h-4 w-4 text-primary" />
           <h2 className="font-medium">AI Governance & Cost Controls</h2>
         </div>
         <p className="text-xs text-muted-foreground mb-5">Set monthly spend limits and fallback behaviors for all AI operations across the CRM.</p>
@@ -623,13 +663,14 @@ export default function AISettings() {
             <p className="text-[10px] text-muted-foreground">Action taken on hard cap</p>
           </div>
         </div>
-      </section>
+        <div className="flex gap-2">
+          <Button onClick={() => void saveAll()} disabled={saving} className="gap-2">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save settings</Button>
+        </div>
+      </section>}
 
-      <Separator className="mb-10" />
-
-      <section className="mb-8">
+      {activeTab === 'company' && <section className="mb-8">
         <div className="flex items-center gap-2 mb-1">
-          <Settings className="h-4 w-4 text-amber-500" />
+          <Settings className="h-4 w-4 text-primary" />
           <h2 className="font-medium">Company Profile</h2>
         </div>
         <p className="text-xs text-muted-foreground mb-5">Injected into CRM prompts for lead search, outreach and proposals.</p>
@@ -639,7 +680,12 @@ export default function AISettings() {
           <div className="flex flex-col gap-1.5"><Label>Unique selling point</Label><Input value={settings.usp} onChange={e => setField('usp', e.target.value)} /></div>
           <div className="flex flex-col gap-1.5"><Label>Meeting scheduling URL</Label><Input value={settings.scheduling_url} onChange={e => setField('scheduling_url', e.target.value)} placeholder="https://cal.com/your-name" /></div>
         </div>
-      </section>
+        <div className="flex gap-2 mt-4">
+          <Button onClick={() => void saveAll()} disabled={saving} className="gap-2">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save settings</Button>
+        </div>
+      </section>}
+        </div>
+      </div>
     </div>
   )
 }

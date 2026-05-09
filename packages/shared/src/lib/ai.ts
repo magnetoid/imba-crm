@@ -1,6 +1,6 @@
 import { supabase } from '../supabase/client'
 
-export type AIProvider = 'anthropic' | 'openai' | 'gemini' | 'perplexity' | 'ollama'
+export type AIProvider = 'anthropic' | 'openai' | 'gemini' | 'perplexity' | 'ollama' | 'openrouter'
 
 export interface AIRequestOptions {
   maxTokens?: number
@@ -30,6 +30,8 @@ export interface CRMRuntimeSettings {
   ollama_base_url: string
   ollama_model: string
   ollama_models: string[]
+  openrouter_model: string
+  openrouter_models: string[]
   smtp_host: string
   smtp_port: string
   smtp_secure: boolean
@@ -90,6 +92,8 @@ export const DEFAULT_CRM_RUNTIME_SETTINGS: CRMRuntimeSettings = {
   ollama_base_url: 'http://host.docker.internal:11434',
   ollama_model: 'llama3.1',
   ollama_models: [],
+  openrouter_model: 'anthropic/claude-sonnet-4',
+  openrouter_models: [],
   smtp_host: '',
   smtp_port: '587',
   smtp_secure: false,
@@ -251,6 +255,7 @@ export async function getCRMRuntimeSettings(): Promise<CRMRuntimeSettings> {
     'gemini_model', 'gemini_models',
     'perplexity_model', 'perplexity_models',
     'ollama_base_url', 'ollama_model', 'ollama_models',
+    'openrouter_model', 'openrouter_models',
     'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_username',
     'smtp_from_name', 'smtp_from_email',
     'ai_outreach_tone', 'ai_auto_enrich', 'ai_inbox_auto_categorize',
@@ -277,6 +282,7 @@ export async function getCRMRuntimeSettings(): Promise<CRMRuntimeSettings> {
   merged.gemini_models = normalizeStringArray(merged.gemini_models)
   merged.perplexity_models = normalizeStringArray(merged.perplexity_models)
   merged.ollama_models = normalizeStringArray(merged.ollama_models)
+  merged.openrouter_models = normalizeStringArray(merged.openrouter_models)
   merged.active_ai_provider = (merged.active_ai_provider || 'anthropic') as AIProvider
   merged.active_ai_model = merged.active_ai_model || merged[`${merged.active_ai_provider}_model` as keyof CRMRuntimeSettings] as string || DEFAULT_CRM_RUNTIME_SETTINGS.active_ai_model
 

@@ -4,6 +4,7 @@ import { createDeepgramProvider } from './deepgram.js';
 import { createGoogleProvider } from './google.js';
 import { createOllamaProvider } from './ollama.js';
 import { createOpenAIProvider } from './openai.js';
+import { createOpenRouterProvider } from './openrouter.js';
 import { createPerplexityProvider } from './perplexity.js';
 
 export type ProviderFactory = () => ModelProvider;
@@ -11,6 +12,7 @@ export type ProviderFactory = () => ModelProvider;
 const registry: Record<string, ProviderFactory> = {
   anthropic: createAnthropicProvider,
   openai: createOpenAIProvider,
+  openrouter: createOpenRouterProvider,
   google: createGoogleProvider,
   ollama: createOllamaProvider,
   deepgram: createDeepgramProvider,

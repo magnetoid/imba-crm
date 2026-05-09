@@ -10,7 +10,7 @@ const AUTH_TOKEN = process.env.ROUTER_API_TOKEN;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
 const providerConfigs: Record<string, ProviderConfig> = {};
-for (const provider of ['anthropic', 'openai', 'google', 'ollama', 'deepgram', 'perplexity']) {
+for (const provider of ['anthropic', 'openai', 'openrouter', 'google', 'ollama', 'deepgram', 'perplexity']) {
   const apiKey = process.env[`${provider.toUpperCase()}_API_KEY`];
   const baseUrl = process.env[`${provider.toUpperCase()}_BASE_URL`];
   if (apiKey || baseUrl) {

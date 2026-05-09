@@ -154,6 +154,8 @@ export interface ProviderConfig {
   baseUrl?: string;
   timeout?: number;
   modelId?: string;
+  // Optional provider-specific extras (e.g. OpenRouter HTTP-Referer / X-Title).
+  extra?: Record<string, unknown>;
 }
 
 export interface ProviderResponse {
