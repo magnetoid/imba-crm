@@ -10,7 +10,9 @@
     "./supabase": "./src/supabase/index.ts",
     "./ui/*": "./src/ui/*.tsx",
     "./auth": "./src/auth/index.ts",
-    "./lib/*": "./src/lib/*.ts"
+    "./lib/*": "./src/lib/*.ts",
+    "./integrations": "./src/integrations/index.ts",
+    "./integrations/*": "./src/integrations/*.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

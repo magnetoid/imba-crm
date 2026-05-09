@@ -1,5 +1,5 @@
 // Apollo.io people + org enrichment. https://apolloapi.com/docs
-import { getProviderCredential, IntegrationError } from './_creds'
+import { IntegrationError, type ProviderCredential } from './_creds'
 
 const BASE = 'https://api.apollo.io/api/v1'
 
@@ -23,16 +23,14 @@ export interface ApolloPerson {
   }
 }
 
-export async function enrichPerson(opts: {
-  email?: string
-  firstName?: string
-  lastName?: string
-  domain?: string
-  linkedinUrl?: string
-  reveal_phone?: boolean
-}): Promise<ApolloPerson | null> {
-  const { apiKey } = await getProviderCredential('apollo')
-  if (!apiKey) throw new IntegrationError('apollo', 'no API key configured')
+export async function enrichPerson(
+  cred: ProviderCredential,
+  opts: {
+    email?: string; firstName?: string; lastName?: string;
+    domain?: string; linkedinUrl?: string; reveal_phone?: boolean
+  },
+): Promise<ApolloPerson | null> {
+  if (!cred.apiKey) throw new IntegrationError('apollo', 'no API key')
 
   const body: Record<string, unknown> = {}
   if (opts.email)        body.email          = opts.email
@@ -46,7 +44,7 @@ export async function enrichPerson(opts: {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-api-key': apiKey,
+      'x-api-key': cred.apiKey,
     },
     body: JSON.stringify(body),
   })

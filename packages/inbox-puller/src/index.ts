@@ -2,6 +2,7 @@ import { getRuntimeSettings } from './supabase.js'
 import { pollImap } from './imap.js'
 import { pollPop3 } from './pop3.js'
 import { pollOutreach } from './send-email.js'
+import { dispatchAttempts } from './channels/dispatch.js'
 import { startHttpServer } from './server.js'
 
 function log(level: 'info' | 'warn' | 'error', msg: string, extra: Record<string, unknown> = {}) {
@@ -23,12 +24,13 @@ async function tick(): Promise<number> {
     return DEFAULT_INTERVAL_S
   }
 
-  // Run IMAP, POP3, and the SMTP outbox in parallel; they're independent and
-  // a stuck call on one shouldn't block the others.
+  // Run all loops in parallel; they're independent and a stuck call on
+  // one shouldn't block the others.
   await Promise.allSettled([
     pollImap(settings),
     pollPop3(settings),
     pollOutreach(),
+    dispatchAttempts(),
   ])
 
   const requested = settings.imap_poll_seconds || DEFAULT_INTERVAL_S

@@ -41,6 +41,27 @@ export async function getRuntimeSettings(): Promise<RuntimeSettings | null> {
   return data as RuntimeSettings | null
 }
 
+/**
+ * Generic credential loader for any provider in crm_provider_credentials.
+ * Used by integration channels (apify/hunter/apollo/browserbase/cal/...).
+ * Returns a ProviderCredential the integration clients can pass straight
+ * to runApifyActor / findEmail / etc.
+ */
+export async function loadProviderCredential(provider: string): Promise<{ apiKey: string; extra?: Record<string, unknown> } | null> {
+  const { data, error } = await supabase
+    .from('crm_provider_credentials')
+    .select('api_key, extra')
+    .eq('provider', provider)
+    .maybeSingle()
+  if (error) {
+    console.error(JSON.stringify({ msg: 'failed to load provider credential', provider, error: error.message }))
+    return null
+  }
+  const row = data as { api_key: string | null; extra: Record<string, unknown> | null } | null
+  if (!row?.api_key) return null
+  return { apiKey: row.api_key, extra: row.extra ?? undefined }
+}
+
 export async function getProviderSecret(provider: 'imap' | 'pop3' | 'smtp'): Promise<string | null> {
   // service_role can read crm_provider_credentials directly (RLS allows it)
   const { data, error } = await supabase
