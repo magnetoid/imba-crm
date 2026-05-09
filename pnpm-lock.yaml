@@ -535,6 +535,15 @@ importers:
         specifier: ^5.2.2
         version: 5.9.3
 
+  packages/widget:
+    devDependencies:
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vite:
+        specifier: ^5.0.11
+        version: 5.4.21(@types/node@20.19.39)
+
 packages:
 
   '@alloc/quick-lru@5.2.0':

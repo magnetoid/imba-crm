@@ -18,7 +18,10 @@ import nodemailer from 'nodemailer'
 import { ImapFlow } from 'imapflow'
 import Pop3Command from 'node-pop3'
 import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
 import { supabase } from './supabase.js'
+import { mountWidgetApi } from './widget-api.js'
 
 const PORT = parseInt(process.env.WORKER_HTTP_PORT || '3030', 10)
 const JWT_SECRET = process.env.JWT_SECRET || ''
@@ -67,6 +70,36 @@ export function startHttpServer() {
   const app = new Hono()
 
   app.get('/healthz', c => c.text('ok'))
+
+  // ── Embeddable chat widget bootstrap ──────────────────────────────
+  // Serve /widget.js from disk. Built by `pnpm --filter @imba/widget build`
+  // and copied into the runner image at /app/widget/widget.js.
+  app.get('/widget.js', c => {
+    try {
+      const candidates = [
+        '/app/widget/widget.js',
+        path.resolve(process.cwd(), 'widget/widget.js'),
+      ]
+      let body: Buffer | null = null
+      for (const p of candidates) {
+        try { body = fs.readFileSync(p); break } catch { /* next */ }
+      }
+      if (!body) return c.text('// widget.js not built\n', 404)
+      return new Response(body, {
+        status: 200,
+        headers: {
+          'content-type': 'application/javascript; charset=utf-8',
+          'cache-control': 'public, max-age=300',
+          'access-control-allow-origin': '*',
+        },
+      })
+    } catch {
+      return c.text('// widget.js read error\n', 500)
+    }
+  })
+
+  // Mount the widget HTTP API (POST/GET /api/widget/*).
+  mountWidgetApi(app)
 
   // ── Open-pixel ────────────────────────────────────────────────────────
   app.get('/track/pixel/:idgif', async c => {

@@ -28,6 +28,11 @@ interface InboxMessage {
   ai_category: string | null
   ai_suggested_reply: string | null
   received_at: string
+  metadata?: {
+    source?: string
+    conversation_id?: string
+    visitor_name?: string
+  } | null
   crm_leads?: { name: string; company: string } | null
 }
 
@@ -47,7 +52,9 @@ export default function AIInbox() {
   const [leads, setLeads] = useState<CRMLead[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<InboxMessage | null>(null)
-  const [filter, setFilter] = useState<'all' | 'unread' | 'inbound' | 'outbound'>('all')
+  const [filter, setFilter] = useState<'all' | 'unread' | 'inbound' | 'outbound' | 'widget'>('all')
+  const [widgetReply, setWidgetReply] = useState('')
+  const [sendingWidgetReply, setSendingWidgetReply] = useState(false)
   const [search, setSearch] = useState('')
   const [addDialog, setAddDialog] = useState(false)
   const [analyzing, setAnalyzing] = useState<string | null>(null)
@@ -134,6 +141,7 @@ Return ONLY valid JSON: {"sentiment":"positive|neutral|negative","category":"que
     if (filter === 'unread') return m.status === 'unread'
     if (filter === 'inbound') return m.direction === 'inbound'
     if (filter === 'outbound') return m.direction === 'outbound'
+    if (filter === 'widget') return m.metadata?.source === 'widget'
     return true
   }).filter(m =>
     !search ||
@@ -141,6 +149,37 @@ Return ONLY valid JSON: {"sentiment":"positive|neutral|negative","category":"que
     m.from_email?.toLowerCase().includes(search.toLowerCase()) ||
     m.crm_leads?.name?.toLowerCase().includes(search.toLowerCase())
   )
+
+  async function sendWidgetReply() {
+    if (!selected || !selected.metadata?.conversation_id || !widgetReply.trim()) return
+    setSendingWidgetReply(true)
+    const conversationId = selected.metadata.conversation_id
+    const body = widgetReply.trim()
+    const { error } = await supabase.from('crm_inbox_messages').insert({
+      lead_id: selected.lead_id,
+      direction: 'outbound',
+      subject: null,
+      body,
+      from_email: null,
+      to_email: selected.from_email,
+      status: 'read',
+      received_at: new Date().toISOString(),
+      type: 'general',
+      priority: 'normal',
+      metadata: { source: 'widget', conversation_id: conversationId },
+    })
+    setSendingWidgetReply(false)
+    if (error) {
+      toast.error(error.message)
+      return
+    }
+    await supabase.from('crm_widget_conversations')
+      .update({ last_message_at: new Date().toISOString() })
+      .eq('id', conversationId)
+    setWidgetReply('')
+    toast.success('Reply sent to widget')
+    load()
+  }
 
   const unreadCount = messages.filter(m => m.status === 'unread').length
 
@@ -160,14 +199,19 @@ Return ONLY valid JSON: {"sentiment":"positive|neutral|negative","category":"que
 
       {/* Filters + Search */}
       <div className="flex items-center gap-3 mb-5 flex-wrap">
-        {(['all', 'unread', 'inbound', 'outbound'] as const).map(f => (
-          <button key={f} onClick={() => setFilter(f)}
-            className={`px-3 py-1.5 rounded text-xs font-mono transition-colors ${filter === f ? 'bg-amber-500/15 text-amber-400' : 'text-muted-foreground hover:text-foreground'}`}>
-            {f.charAt(0).toUpperCase() + f.slice(1)} ({f === 'all'
-              ? messages.filter(m => m.status !== 'archived').length
-              : messages.filter(m => m.status !== 'archived' && (f === 'unread' ? m.status === 'unread' : m.direction === f)).length})
-          </button>
-        ))}
+        {(['all', 'unread', 'inbound', 'outbound', 'widget'] as const).map(f => {
+          const count = f === 'all'
+            ? messages.filter(m => m.status !== 'archived').length
+            : f === 'widget'
+              ? messages.filter(m => m.status !== 'archived' && m.metadata?.source === 'widget').length
+              : messages.filter(m => m.status !== 'archived' && (f === 'unread' ? m.status === 'unread' : m.direction === f)).length
+          return (
+            <button key={f} onClick={() => setFilter(f)}
+              className={`px-3 py-1.5 rounded text-xs font-mono transition-colors ${filter === f ? 'bg-amber-500/15 text-amber-400' : 'text-muted-foreground hover:text-foreground'}`}>
+              {f.charAt(0).toUpperCase() + f.slice(1)} ({count})
+            </button>
+          )
+        })}
         <div className="relative ml-auto">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…" className="pl-8 h-8 text-sm w-48" />
@@ -260,14 +304,44 @@ Return ONLY valid JSON: {"sentiment":"positive|neutral|negative","category":"que
                     <span className="text-xs font-mono text-amber-500/70 tracking-widest uppercase">AI suggested reply</span>
                   </div>
                   <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">{selected.ai_suggested_reply}</p>
-                  <div className="flex gap-2 mt-3">
+                  <div className="flex gap-2 mt-3 flex-wrap">
                     <Button size="sm" className="h-7 text-xs gap-1.5 bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 border border-amber-500/20"
                       onClick={() => window.open(`mailto:${selected.from_email || ''}?subject=Re: ${encodeURIComponent(selected.subject || '')}&body=${encodeURIComponent(selected.ai_suggested_reply || '')}`)}>
                       <Reply className="h-3 w-3" /> Use in mail client
                     </Button>
+                    {selected.metadata?.source === 'widget' && (
+                      <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"
+                        onClick={() => setWidgetReply(selected.ai_suggested_reply || '')}>
+                        Drop into widget reply
+                      </Button>
+                    )}
                     <Button variant="ghost" size="sm" className="h-7 text-xs"
                       onClick={() => { navigator.clipboard.writeText(selected.ai_suggested_reply || ''); toast.success('Copied!') }}>
                       Copy
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {selected.metadata?.source === 'widget' && selected.metadata?.conversation_id && (
+                <div className="border border-cyan-500/20 bg-cyan-500/5 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <MessageSquare className="h-3.5 w-3.5 text-cyan-400" />
+                    <span className="text-xs font-mono text-cyan-400/70 tracking-widest uppercase">Reply via widget</span>
+                  </div>
+                  <Textarea
+                    rows={4}
+                    placeholder="Type your reply — visitor sees it inside the chat widget on their site."
+                    value={widgetReply}
+                    onChange={e => setWidgetReply(e.target.value)}
+                    className="text-sm"
+                  />
+                  <div className="flex justify-end mt-2">
+                    <Button size="sm" className="h-7 text-xs gap-1.5"
+                      disabled={sendingWidgetReply || !widgetReply.trim()}
+                      onClick={() => void sendWidgetReply()}>
+                      {sendingWidgetReply ? <Loader2 className="h-3 w-3 animate-spin" /> : <Reply className="h-3 w-3" />}
+                      Send to widget
                     </Button>
                   </div>
                 </div>
