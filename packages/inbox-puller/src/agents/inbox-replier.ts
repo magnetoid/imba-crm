@@ -93,6 +93,24 @@ export async function runInboxReplier(ctx: AgentContext, job: JobRow): Promise<R
     })
   }
 
+  // If the AI categorised this as a meeting_request, fan out to
+  // meeting-booker so the next outbound already embeds a booking link
+  // tied to the operator's Cal.com / scheduling URL. The meeting-booker
+  // job goes through the same autonomy gates as everything else.
+  if ((draft as { category: string }).category === 'meeting_request' && message.lead_id) {
+    await ctx.step('fanout-meeting-booker', { lead_id: message.lead_id }, async () => {
+      const { error } = await supabase.from('crm_agent_jobs').insert({
+        agent_kind: 'meeting-booker',
+        status: 'queued',
+        input: { lead_id: message.lead_id, message_id: message.id },
+        lead_id: message.lead_id,
+        triggered_by: 'inbox-replier',
+      })
+      if (error) throw new Error(error.message)
+      return { fanout: 'meeting-booker' }
+    })
+  }
+
   return {
     category: (draft as { category: string }).category,
     sentiment: (draft as { sentiment: string }).sentiment,

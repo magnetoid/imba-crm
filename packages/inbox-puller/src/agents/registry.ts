@@ -9,6 +9,7 @@ import { runOutreachDrafter } from './outreach-drafter.js'
 import { runLeadEnricher }    from './lead-enricher.js'
 import { runLeadFinder }      from './lead-finder.js'
 import { runInboxReplier }    from './inbox-replier.js'
+import { runMeetingBooker }   from './meeting-booker.js'
 
 export type AgentRunner = (ctx: AgentContext, job: JobRow) => Promise<Record<string, unknown> | void>
 
@@ -17,7 +18,7 @@ export const AGENT_REGISTRY: Record<string, AgentRunner> = {
   'lead-enricher':    runLeadEnricher,
   'lead-finder':      runLeadFinder,
   'inbox-replier':    runInboxReplier,
-  // 'meeting-booker':   runMeetingBooker,    // wired in Phase 5
+  'meeting-booker':   runMeetingBooker,
   // 'proposal-writer':  runProposalWriter,   // future
 }
 

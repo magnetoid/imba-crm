@@ -22,6 +22,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { supabase } from './supabase.js'
 import { mountWidgetApi } from './widget-api.js'
+import { mountCalWebhook } from './webhooks/cal.js'
 
 const PORT = parseInt(process.env.WORKER_HTTP_PORT || '3030', 10)
 const JWT_SECRET = process.env.JWT_SECRET || ''
@@ -100,6 +101,9 @@ export function startHttpServer() {
 
   // Mount the widget HTTP API (POST/GET /api/widget/*).
   mountWidgetApi(app)
+
+  // Third-party webhook receivers (Cal.com bookings → CRM activity log).
+  mountCalWebhook(app)
 
   // ── Open-pixel ────────────────────────────────────────────────────────
   app.get('/track/pixel/:idgif', async c => {
