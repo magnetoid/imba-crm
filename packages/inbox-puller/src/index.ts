@@ -3,6 +3,7 @@ import { pollImap } from './imap.js'
 import { pollPop3 } from './pop3.js'
 import { pollOutreach } from './send-email.js'
 import { dispatchAttempts } from './channels/dispatch.js'
+import { pollAgentJobs }   from './agents/loop.js'
 import { startHttpServer } from './server.js'
 
 function log(level: 'info' | 'warn' | 'error', msg: string, extra: Record<string, unknown> = {}) {
@@ -31,6 +32,7 @@ async function tick(): Promise<number> {
     pollPop3(settings),
     pollOutreach(),
     dispatchAttempts(),
+    pollAgentJobs(),
   ])
 
   const requested = settings.imap_poll_seconds || DEFAULT_INTERVAL_S
