@@ -74,6 +74,16 @@ export async function runLeadEnricher(ctx: AgentContext, job: JobRow): Promise<R
     return { updated: true, fields: Object.keys(update) }
   })
 
+  // ── Trigger scoring once the enrichment is in. The lead-scorer is in
+  // 'auto' mode by default, so this is fire-and-forget — the agent loop
+  // picks it up on the next tick.
+  await supabase.from('crm_agent_jobs').insert({
+    agent_kind: 'lead-scorer',
+    lead_id: job.lead_id,
+    input: { reason: 'enrichment-completed' },
+    triggered_by: 'lead-enricher',
+  })
+
   return {
     hunted_email: huntedEmail,
     enriched_apollo: !!enriched,

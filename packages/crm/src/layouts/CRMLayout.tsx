@@ -11,6 +11,7 @@ import {
 } from '@imba/shared/ui/command'
 import { GROUPS, modulesByGroup, primaryPath, MODULES } from '@/modules/registry'
 import type { CRMModule } from '@/modules/types'
+import { useHotLeadAlerts } from '@/lib/useHotLeadAlerts'
 
 function NavItem({ m }: { m: CRMModule }) {
   const Icon = m.icon
@@ -41,6 +42,9 @@ export default function CRMLayout() {
     document.body.classList.add('admin-shell')
     return () => { document.body.classList.remove('admin-shell') }
   }, [])
+
+  // Hot-lead push alerts (speed-to-lead).
+  useHotLeadAlerts()
 
   // Cmd/Ctrl-K opens the command palette.
   useEffect(() => {

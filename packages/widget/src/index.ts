@@ -109,8 +109,34 @@ class ImbaWidget {
     root.appendChild(this.renderPanel())
     this.shadow.appendChild(root)
 
+    // Fire a single page-view ping so the CRM gets first-party intent
+    // data even before the visitor opens the widget. Anonymous events are
+    // backfilled onto a lead later, when the visitor identifies.
+    void this.ping()
+
     // Resume an existing conversation if there is one.
     void this.resume().catch(() => { /* ignore */ })
+  }
+
+  private async ping() {
+    try {
+      const utm: Record<string, string> = {}
+      const params = new URLSearchParams(location.search)
+      for (const k of ['utm_source','utm_medium','utm_campaign','utm_term','utm_content']) {
+        const v = params.get(k); if (v) utm[k] = v.slice(0, 200)
+      }
+      await fetch(`${this.cfg.baseUrl}/track/visit`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          token: this.token,
+          url: location.href.slice(0, 1000),
+          referrer: document.referrer ? document.referrer.slice(0, 1000) : null,
+          utm,
+        }),
+        keepalive: true,
+      })
+    } catch { /* don't break the host page on a network error */ }
   }
 
   private renderLauncher(): HTMLElement {

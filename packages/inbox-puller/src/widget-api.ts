@@ -130,6 +130,28 @@ export function mountWidgetApi(app: Hono) {
       convId = (created as { id: string }).id
     }
 
+    // Backfill anonymous /track/visit events from this token onto the
+    // newly-identified lead so intent_score sees the full visit history.
+    // The visitor_events update trigger will enqueue a lead-scorer job
+    // for each row we attribute; we additionally queue an enricher pass
+    // so we can pull domain/title from Apollo before scoring lands.
+    if (leadId) {
+      try {
+        await supabase.rpc('attribute_visitor_events', {
+          p_token: token as string,
+          p_lead_id: leadId,
+        })
+      } catch (e) {
+        log('warn', 'attribute_visitor_events failed', { error: (e as Error).message })
+      }
+      await supabase.from('crm_agent_jobs').insert({
+        agent_kind: 'lead-enricher',
+        lead_id: leadId,
+        input: { reason: 'widget-identified' },
+        triggered_by: 'widget-api',
+      })
+    }
+
     return c.json({ conversation_id: convId, identified: true })
   })
 

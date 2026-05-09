@@ -120,6 +120,33 @@ export function startHttpServer() {
     })
   })
 
+  // ── Visit ping (first-party intent stream) ───────────────────────────
+  // Called from the widget on every page view of the host site. CORS is
+  // open because the widget runs on third-party origins.
+  app.options('/track/visit', c => {
+    c.header('Access-Control-Allow-Origin', '*')
+    c.header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+    c.header('Access-Control-Allow-Headers', 'content-type')
+    return c.body(null, 204)
+  })
+  app.post('/track/visit', async c => {
+    c.header('Access-Control-Allow-Origin', '*')
+    const body = await c.req.json().catch(() => ({})) as Record<string, unknown>
+    const token = typeof body.token === 'string' ? body.token : null
+    if (!token || !/^wid_[a-z0-9_]{4,80}$/i.test(token)) {
+      return c.json({ error: 'bad token' }, 400)
+    }
+    void recordVisit({
+      token,
+      url: typeof body.url === 'string' ? body.url.slice(0, 1000) : null,
+      referrer: typeof body.referrer === 'string' ? body.referrer.slice(0, 1000) : null,
+      utm: (body.utm && typeof body.utm === 'object') ? body.utm as Record<string, unknown> : {},
+      ua: c.req.header('user-agent') || '',
+      ip: c.req.header('x-forwarded-for') || '',
+    })
+    return c.json({ ok: true })
+  })
+
   // ── Click redirect ────────────────────────────────────────────────────
   app.get('/track/click/:tracking', async c => {
     const tracking = c.req.param('tracking')
@@ -271,6 +298,36 @@ async function loadSettings(_kind: 'smtp' | 'imap' | 'pop3'): Promise<AnySetting
     .eq('id', 1)
     .maybeSingle()
   return (data as AnySettings | null) ?? null
+}
+
+async function recordVisit(args: {
+  token: string
+  url: string | null
+  referrer: string | null
+  utm: Record<string, unknown>
+  ua: string
+  ip: string
+}) {
+  // If this token already maps to a known lead via a widget conversation,
+  // attribute the event immediately (so intent_score stays current). The
+  // backfill RPC handles future-known leads.
+  const { data: conv } = await supabase
+    .from('crm_widget_conversations')
+    .select('lead_id')
+    .eq('visitor_token', args.token)
+    .maybeSingle()
+  const leadId = (conv as { lead_id: string | null } | null)?.lead_id ?? null
+
+  await supabase.from('crm_visitor_events').insert({
+    visitor_token: args.token,
+    lead_id: leadId,
+    event_type: 'page_view',
+    url: args.url,
+    referrer: args.referrer,
+    utm: args.utm,
+    user_agent: args.ua.slice(0, 200),
+    ip: args.ip.slice(0, 100),
+  })
 }
 
 async function getStoredSecret(provider: 'smtp' | 'imap' | 'pop3'): Promise<string | null> {

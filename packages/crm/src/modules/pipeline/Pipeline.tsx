@@ -33,10 +33,25 @@ export interface CRMLead {
   notes?: string
   ai_score?: number
   ai_notes?: string
+  fit_score?: number
+  intent_score?: number
+  engagement_score?: number
+  last_scored_at?: string
   last_contacted_at?: string
   next_follow_up?: string
   created_at: string
   updated_at: string
+}
+
+// Composite "next-best-action" score used to rank leads inside a stage.
+// We use fit×intent because both must be > 0 for a lead to be worth
+// chasing. Falls back to ai_score, then to recency.
+function nextBestActionScore(l: { fit_score?: number; intent_score?: number; ai_score?: number }): number {
+  const f = l.fit_score ?? -1
+  const i = l.intent_score ?? -1
+  if (f >= 0 && i >= 0) return f * i
+  if (l.ai_score != null) return l.ai_score * 50
+  return -1
 }
 
 export const STAGES: { key: string; label: string; color: string }[] = [
@@ -482,7 +497,10 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
           <div className="overflow-x-auto pb-4">
             <div className="flex gap-4" style={{ minWidth: `${STAGES.length * 240}px` }}>
               {STAGES.map(stage => {
+                // Sort within each stage by fit×intent so the lead the
+                // operator should call *next* always floats to the top.
                 const stageLeads = filtered.filter(l => l.stage === stage.key)
+                  .slice().sort((a, b) => nextBestActionScore(b) - nextBestActionScore(a))
                 const stageValue = stageLeads.reduce((s, l) => s + (l.value || 0), 0)
                 return (
                   <div key={stage.key} className="flex-1" style={{ minWidth: '220px' }}>
@@ -583,7 +601,9 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
                       </Badge>
                     </td>
                     <td className="px-4 py-3">
-                      {lead.ai_score != null ? (
+                      {(lead.fit_score != null || lead.intent_score != null) ? (
+                        <FitIntentPip fit={lead.fit_score} intent={lead.intent_score} />
+                      ) : lead.ai_score != null ? (
                         <AIScorePip score={lead.ai_score} />
                       ) : (
                         <button onClick={() => scoreWithAI(lead)} disabled={scoringId === lead.id}
@@ -736,7 +756,13 @@ function LeadCard({
             {lead.company && <p className="text-xs text-muted-foreground mt-0.5 truncate">{lead.company}</p>}
           </div>
         </div>
-        {lead.ai_score != null && <AIScorePip score={lead.ai_score} />}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {(lead.fit_score != null || lead.intent_score != null) ? (
+            <FitIntentPip fit={lead.fit_score} intent={lead.intent_score} />
+          ) : (
+            lead.ai_score != null && <AIScorePip score={lead.ai_score} />
+          )}
+        </div>
       </div>
 
       {lead.service_interest && (
@@ -796,6 +822,25 @@ function AIScorePip({ score }: { score: number }) {
     <div className="flex items-center gap-1 flex-shrink-0">
       <div className="w-2 h-2 rounded-full" style={{ background: color }} />
       <span className="text-xs font-mono font-bold" style={{ color }}>{score}</span>
+    </div>
+  )
+}
+
+function FitIntentPip({ fit, intent }: { fit?: number; intent?: number }) {
+  // Two stacked dots: fit (icp match) on top, intent (recent behavior) below.
+  const c = (n: number | undefined) => n == null ? '#475569' : n >= 70 ? '#22c55e' : n >= 40 ? '#C9A96E' : '#ef4444'
+  return (
+    <div
+      className="flex items-center gap-1 flex-shrink-0"
+      title={`Fit: ${fit ?? '—'}  ·  Intent: ${intent ?? '—'}`}
+    >
+      <div className="flex flex-col gap-0.5">
+        <div className="w-2 h-2 rounded-full" style={{ background: c(fit) }} />
+        <div className="w-2 h-2 rounded-full" style={{ background: c(intent) }} />
+      </div>
+      <span className="text-xs font-mono font-bold" style={{ color: c(fit) }}>{fit ?? '—'}</span>
+      <span className="text-xs font-mono text-muted-foreground">/</span>
+      <span className="text-xs font-mono font-bold" style={{ color: c(intent) }}>{intent ?? '—'}</span>
     </div>
   )
 }
