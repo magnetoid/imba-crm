@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",
+    "@imba/shared": "workspace:*",
     "@supabase/supabase-js": "^2.39.0",
     "hono": "^4.6.0",
     "imapflow": "^1.0.171",
