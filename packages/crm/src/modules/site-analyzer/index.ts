@@ -9,7 +9,7 @@ export const module: CRMModule = {
   id: 'site-analyzer',
   label: 'Site Analyzer',
   icon: Radar,
-  group: 'intelligence',
+  group: 'find',
   order: 2,
   routes: [
     { path: '', component: SiteAnalyzer, index: true },

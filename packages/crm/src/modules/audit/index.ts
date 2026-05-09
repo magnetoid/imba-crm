@@ -8,7 +8,7 @@ export const module: CRMModule = {
   id: 'audit',
   label: 'AI Audit',
   icon: History,
-  group: 'intelligence',
+  group: 'intel',
   order: 2,
   routes: [{ path: '', component: Audit, index: true }],
 }

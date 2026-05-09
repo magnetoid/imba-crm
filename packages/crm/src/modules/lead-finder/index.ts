@@ -8,7 +8,7 @@ export const module: CRMModule = {
   id: 'lead-finder',
   label: 'Lead Finder',
   icon: Search,
-  group: 'outreach',
+  group: 'find',
   order: 1,
   routes: [{ path: '', component: LeadFinder, index: true }],
 }

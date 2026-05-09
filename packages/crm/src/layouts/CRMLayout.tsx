@@ -1,10 +1,15 @@
-import { Suspense, useEffect } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
-import { LogOut, Loader2 } from 'lucide-react'
+import { Suspense, useEffect, useState } from 'react'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { LogOut, Loader2, Search } from 'lucide-react'
 import { supabase } from '@imba/shared/supabase'
 import { useSession, hasRole } from '@imba/shared/auth'
 import { Separator } from '@imba/shared/ui/separator'
-import { GROUPS, modulesByGroup, primaryPath } from '@/modules/registry'
+import { Kbd } from '@imba/shared/ui/kbd'
+import {
+  CommandDialog, CommandInput, CommandList, CommandEmpty,
+  CommandGroup, CommandItem, CommandShortcut,
+} from '@imba/shared/ui/command'
+import { GROUPS, modulesByGroup, primaryPath, MODULES } from '@/modules/registry'
 import type { CRMModule } from '@/modules/types'
 
 function NavItem({ m }: { m: CRMModule }) {
@@ -29,19 +34,41 @@ function NavItem({ m }: { m: CRMModule }) {
 
 export default function CRMLayout() {
   const { session } = useSession()
+  const navigate = useNavigate()
+  const [paletteOpen, setPaletteOpen] = useState(false)
 
   useEffect(() => {
     document.body.classList.add('admin-shell')
     return () => { document.body.classList.remove('admin-shell') }
   }, [])
 
+  // Cmd/Ctrl-K opens the command palette.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen(o => !o)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
+
   return (
     <div className="min-h-screen bg-background flex">
       <aside className="w-60 bg-card border-r border-border flex flex-col flex-shrink-0">
-        <div className="p-5 border-b border-border">
-          <span className="text-xl font-semibold text-foreground">
+        <div className="p-5 border-b border-border space-y-3">
+          <span className="text-xl font-semibold text-foreground block">
             imba<span className="italic" style={{ color: '#C9A96E' }}>.</span>crm
           </span>
+          <button
+            onClick={() => setPaletteOpen(true)}
+            className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-md border border-border bg-background/50 hover:bg-accent/40 transition-colors text-xs text-muted-foreground"
+          >
+            <Search className="h-3.5 w-3.5" />
+            <span className="flex-1 text-left">Quick jump…</span>
+            <Kbd>⌘K</Kbd>
+          </button>
         </div>
 
         <nav className="flex-1 p-3 flex flex-col gap-0.5 overflow-y-auto">
@@ -82,6 +109,39 @@ export default function CRMLayout() {
           <Outlet />
         </Suspense>
       </main>
+
+      <CommandDialog open={paletteOpen} onOpenChange={setPaletteOpen}>
+        <CommandInput placeholder="Jump to module, lead, or run an action…" />
+        <CommandList>
+          <CommandEmpty>No matches.</CommandEmpty>
+          {GROUPS.map(group => {
+            const visible = MODULES.filter(m =>
+              m.group === group.id && !m.hidden && (!m.roles || hasRole(session, ...m.roles))
+            ).sort((a, b) => a.order - b.order)
+            if (visible.length === 0) return null
+            return (
+              <CommandGroup key={group.id} heading={group.label}>
+                {visible.map(m => {
+                  const Icon = m.icon
+                  return (
+                    <CommandItem
+                      key={m.id}
+                      onSelect={() => {
+                        navigate(primaryPath(m))
+                        setPaletteOpen(false)
+                      }}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      {m.label}
+                      <CommandShortcut>{group.label}</CommandShortcut>
+                    </CommandItem>
+                  )
+                })}
+              </CommandGroup>
+            )
+          })}
+        </CommandList>
+      </CommandDialog>
     </div>
   )
 }

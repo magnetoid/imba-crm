@@ -8,7 +8,7 @@ export const module: CRMModule = {
   id: 'proposals',
   label: 'Proposals',
   icon: FileText,
-  group: 'deals',
+  group: 'close',
   order: 1,
   routes: [{ path: '', component: Proposals, index: true }],
 }

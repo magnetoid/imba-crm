@@ -39,10 +39,10 @@ export const MODULES: CRMModule[] = [
 
 export const GROUPS: { id: CRMModule['group']; label: string }[] = [
   { id: 'pipeline', label: 'Pipeline' },
-  { id: 'outreach', label: 'AI Outreach' },
-  { id: 'deals', label: 'Deal Closing' },
-  { id: 'intelligence', label: 'Intelligence' },
-  { id: 'leads', label: 'Leads' },
+  { id: 'find',     label: 'Find' },
+  { id: 'engage',   label: 'Engage' },
+  { id: 'close',    label: 'Close' },
+  { id: 'intel',    label: 'Intelligence' },
 ]
 
 export function modulesByGroup(group: CRMModule['group']): CRMModule[] {

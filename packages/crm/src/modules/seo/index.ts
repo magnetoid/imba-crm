@@ -8,7 +8,7 @@ export const module: CRMModule = {
   id: 'seo',
   label: 'SEO Studio',
   icon: Search,
-  group: 'intelligence',
+  group: 'intel',
   order: 4,
   routes: [{ path: '', component: SEOManager, index: true }],
 }

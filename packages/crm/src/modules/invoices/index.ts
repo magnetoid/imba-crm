@@ -8,7 +8,7 @@ export const module: CRMModule = {
   id: 'invoices',
   label: 'Invoices',
   icon: Receipt,
-  group: 'deals',
+  group: 'close',
   order: 2,
   routes: [{ path: '', component: Invoices, index: true }],
 }

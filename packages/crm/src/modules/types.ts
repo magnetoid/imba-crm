@@ -14,8 +14,16 @@ export interface CRMModule {
   label: string
   /** Lucide icon component (pass the icon itself, not JSX). */
   icon: ComponentType<{ className?: string }>
-  /** Sidebar group — modules with the same `group` are rendered together. */
-  group: 'pipeline' | 'outreach' | 'deals' | 'intelligence' | 'leads'
+  /** Sidebar group — modules with the same `group` are rendered together.
+   *  v2 groups (find / engage / close / intel) live alongside the legacy
+   *  five so existing modules keep rendering without simultaneous edits. */
+  group:
+    | 'find'      // prospecting: lead-finder, site-analyzer
+    | 'engage'    // outbound + inbound conversations: outreach, inbox, agents, chat-widget
+    | 'close'     // monetisation: proposals, invoices
+    | 'intel'     // visibility: analytics, audit, prompts
+    // legacy groups kept for back-compat — phase out as modules migrate:
+    | 'pipeline' | 'outreach' | 'deals' | 'intelligence' | 'leads'
   /** Sort order within the group (lower = higher). */
   order: number
   /** Route paths this module owns. First entry is the primary nav target. */

@@ -8,7 +8,7 @@ export const module: CRMModule = {
   id: 'analytics',
   label: 'Analytics',
   icon: BarChart2,
-  group: 'intelligence',
+  group: 'intel',
   order: 1,
   routes: [{ path: '', component: Analytics, index: true }],
 }

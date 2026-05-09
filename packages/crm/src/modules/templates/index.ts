@@ -8,7 +8,7 @@ export const module: CRMModule = {
   id: 'templates',
   label: 'Templates',
   icon: FileCode,
-  group: 'deals',
+  group: 'close',
   order: 3,
   routes: [{ path: '', component: Templates, index: true }],
 }

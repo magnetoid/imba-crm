@@ -8,7 +8,7 @@ export const module: CRMModule = {
   id: 'settings',
   label: 'Settings',
   icon: SettingsIcon,
-  group: 'intelligence',
+  group: 'intel',
   order: 3,
   roles: ['admin'],
   routes: [{ path: '', component: Settings, index: true }],

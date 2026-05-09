@@ -8,7 +8,7 @@ export const module: CRMModule = {
   id: 'inbox',
   label: 'Inbox',
   icon: InboxIcon,
-  group: 'outreach',
+  group: 'engage',
   order: 3,
   routes: [{ path: '', component: Inbox, index: true }],
 }

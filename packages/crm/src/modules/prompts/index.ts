@@ -8,7 +8,7 @@ export const module: CRMModule = {
   id: 'prompts',
   label: 'Prompt Registry',
   icon: TerminalSquare,
-  group: 'intelligence',
+  group: 'intel',
   order: 5,
   roles: ['admin'],
   routes: [
