@@ -383,13 +383,11 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xs font-mono text-muted-foreground tracking-widest uppercase">AI CRM</span>
-            <span className="text-xs px-1.5 py-0.5 rounded font-mono"
-              style={{ background: 'rgba(201,169,110,0.1)', color: '#C9A96E', border: '1px solid rgba(201,169,110,0.2)' }}>
+            <span className="text-xs px-2 py-0.5 rounded-full font-mono bg-amber-50 text-amber-700 border border-amber-200">
               Powered by Claude
             </span>
             {overdueCount > 0 && (
-              <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded font-mono"
-                style={{ background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.2)' }}>
+              <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-mono bg-red-50 text-red-700 border border-red-200">
                 <Bell className="h-3 w-3" />{overdueCount} overdue
               </span>
             )}
@@ -427,7 +425,7 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
       </div>
 
       {/* Stats bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
         {[
           { icon: Users,      label: 'Total leads',    value: leads.length.toString() },
           { icon: Target,     label: 'Active',         value: activeLeads.toString() },
@@ -435,7 +433,7 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
           { icon: TrendingUp, label: 'Won value',      value: wonValue ? `$${wonValue.toLocaleString()}` : '—' },
           { icon: Trophy,     label: 'Win rate',       value: closedLeads > 0 ? `${winRate}%` : '—' },
         ].map(({ icon: Icon, label, value }) => (
-          <div key={label} className="border border-border rounded-lg p-4">
+          <div key={label} className="bg-card border border-border rounded-lg p-4 shadow-sm">
             <div className="flex items-center gap-2 mb-1">
               <Icon className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">{label}</span>

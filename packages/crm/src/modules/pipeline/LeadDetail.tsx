@@ -675,15 +675,15 @@ function LeadJourney({ createdAt, aiScored, emails, proposals, invoices, stage }
         {steps.map((step, i) => (
           <div key={step.key} className="flex flex-col items-center text-center relative">
             {i > 0 && (
-              <div className="absolute top-3 -left-1/2 w-full h-px" style={{ background: step.done ? step.color : 'rgba(255,255,255,0.1)' }} />
+              <div className="absolute top-3 -left-1/2 w-full h-px bg-border" style={step.done ? { background: step.color } : undefined} />
             )}
             <div
-              className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-mono font-bold z-10 transition-all ${step.done ? 'text-white' : 'text-muted-foreground/50'}`}
-              style={{
-                background: step.done ? step.color : 'rgba(255,255,255,0.05)',
-                border: step.done ? `1px solid ${step.color}` : '1px solid rgba(255,255,255,0.1)',
-                boxShadow: step.done ? `0 0 12px ${step.color}40` : 'none',
-              }}
+              className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-mono font-bold z-10 transition-all ${step.done ? 'text-white' : 'bg-muted text-muted-foreground/60 border border-border'}`}
+              style={step.done ? {
+                background: step.color,
+                border: `1px solid ${step.color}`,
+                boxShadow: `0 2px 8px ${step.color}40`,
+              } : undefined}
             >
               {step.done ? '✓' : i + 1}
             </div>

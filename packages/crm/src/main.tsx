@@ -23,11 +23,12 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             position="bottom-right"
             toastOptions={{
               style: {
-                background: '#18181B',
-                color: '#F5F4F0',
-                border: '1px solid rgba(255,255,255,0.08)',
-                borderRadius: '0',
+                background: 'hsl(var(--card))',
+                color: 'hsl(var(--card-foreground))',
+                border: '1px solid hsl(var(--border))',
+                borderRadius: '0.5rem',
                 fontSize: '0.85rem',
+                boxShadow: '0 4px 12px rgba(15, 23, 42, 0.08)',
               },
             }}
           />

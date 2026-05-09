@@ -85,6 +85,55 @@ body.admin-shell::before {
   display: none;
 }
 
+/* ════════════════════════════════════════════════════════
+   ADMIN SHELL — LIGHT MODE
+   The CRM/admin area uses a clean light palette built on
+   shadcn semantic tokens. The marketing site keeps the
+   futuristic dark theme above. Scoped to body.admin-shell
+   so we never bleed into the public site.
+   ════════════════════════════════════════════════════════ */
+body.admin-shell {
+  --background:          0   0%  100%;
+  --foreground:          224 71% 4%;
+  --card:                0   0%  100%;
+  --card-foreground:     224 71% 4%;
+  --popover:             0   0%  100%;
+  --popover-foreground:  224 71% 4%;
+  --primary:             24  83% 53%;       /* keep ember accent */
+  --primary-foreground:  0   0%  100%;
+  --secondary:           220 14% 96%;
+  --secondary-foreground:220 9%  20%;
+  --muted:               220 14% 96%;
+  --muted-foreground:    220 9%  46%;
+  --accent:              220 14% 96%;
+  --accent-foreground:   220 9%  20%;
+  --destructive:         0   84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border:              220 13% 91%;
+  --input:               220 13% 91%;
+  --ring:                24  83% 53%;
+  --radius:              0.625rem;
+
+  /* Disable any leftover glow tokens that read on dark only. */
+  --grid-line:           rgba(15, 23, 42, 0.04);
+
+  background:            hsl(var(--background));
+  color:                 hsl(var(--foreground));
+}
+
+/* Drop the page-level grain noise on the admin shell — it makes the
+   light surface look dirty. */
+body.admin-shell::after { display: none; }
+
+/* Light-mode scrollbar */
+body.admin-shell ::-webkit-scrollbar       { width: 10px; height: 10px; }
+body.admin-shell ::-webkit-scrollbar-track { background: hsl(var(--muted)); }
+body.admin-shell ::-webkit-scrollbar-thumb { background: hsl(220 13% 80%); border-radius: 6px; }
+body.admin-shell ::-webkit-scrollbar-thumb:hover { background: hsl(220 13% 70%); }
+
+/* Selection in admin tints with primary instead of marketing red. */
+body.admin-shell ::selection { background: hsla(24, 83%, 53%, 0.18); color: hsl(var(--foreground)); }
+
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 3px; }
 ::-webkit-scrollbar-track { background: #111113; }

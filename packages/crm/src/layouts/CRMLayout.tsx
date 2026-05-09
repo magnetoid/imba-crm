@@ -22,7 +22,7 @@ function NavItem({ m }: { m: CRMModule }) {
       className={({ isActive }) =>
         `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
           isActive
-            ? 'bg-amber-500/10 text-amber-500 font-medium'
+            ? 'bg-primary/10 text-primary font-medium'
             : 'text-muted-foreground hover:text-foreground hover:bg-accent'
         }`
       }
@@ -59,15 +59,15 @@ export default function CRMLayout() {
   }, [])
 
   return (
-    <div className="min-h-screen bg-background flex">
+    <div className="min-h-screen bg-muted/40 flex">
       <aside className="w-60 bg-card border-r border-border flex flex-col flex-shrink-0">
         <div className="p-5 border-b border-border space-y-3">
-          <span className="text-xl font-semibold text-foreground block">
-            imba<span className="italic" style={{ color: '#C9A96E' }}>.</span>crm
+          <span className="text-xl font-semibold text-foreground block tracking-tight">
+            imba<span className="italic text-primary">.</span>crm
           </span>
           <button
             onClick={() => setPaletteOpen(true)}
-            className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-md border border-border bg-background/50 hover:bg-accent/40 transition-colors text-xs text-muted-foreground"
+            className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-md border border-border bg-muted/60 hover:bg-muted transition-colors text-xs text-muted-foreground"
           >
             <Search className="h-3.5 w-3.5" />
             <span className="flex-1 text-left">Quick jump…</span>
@@ -84,7 +84,7 @@ export default function CRMLayout() {
             return (
               <div key={group.id}>
                 {groupIdx > 0 && <Separator className="my-2" />}
-                <p className="px-3 py-1 text-[0.6rem] font-mono tracking-widest uppercase text-amber-500/40 mb-1">
+                <p className="px-3 py-1 text-[0.6rem] font-mono tracking-widest uppercase text-muted-foreground/70 mb-1">
                   {group.label}
                 </p>
                 {visible.map(m => <NavItem key={m.id} m={m} />)}
