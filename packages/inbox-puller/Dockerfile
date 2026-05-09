@@ -12,7 +12,10 @@ WORKDIR /app
 FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc* ./
 COPY packages/inbox-puller/package.json ./packages/inbox-puller/
-COPY packages/widget/package.json ./packages/widget/
+COPY packages/widget/package.json       ./packages/widget/
+# inbox-puller depends on @imba/shared/integrations/* — make sure pnpm
+# sees it as a workspace package when filtering deps.
+COPY packages/shared/package.json       ./packages/shared/
 RUN pnpm install --filter "@imba/inbox-puller..." --filter "@imba/widget..." --no-frozen-lockfile
 
 # ── build: compile the worker AND the widget; copy widget.js into the
@@ -20,6 +23,7 @@ RUN pnpm install --filter "@imba/inbox-puller..." --filter "@imba/widget..." --n
 FROM deps AS build
 COPY packages/inbox-puller ./packages/inbox-puller
 COPY packages/widget       ./packages/widget
+COPY packages/shared       ./packages/shared
 RUN pnpm --filter @imba/widget        build
 RUN pnpm --filter @imba/inbox-puller  build
 
