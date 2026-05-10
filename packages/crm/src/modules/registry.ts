@@ -15,6 +15,7 @@ import { module as prompts } from './prompts'
 import { module as siteAnalyzer } from './site-analyzer'
 import { module as agents } from './agents'
 import { module as nomo } from './nomo'
+import { module as signals } from './signals'
 
 /**
  * Registered CRM modules. Adding a new feature is:
@@ -26,6 +27,7 @@ import { module as nomo } from './nomo'
 export const MODULES: CRMModule[] = [
   pipeline,
   leadFinder,
+  signals,
   outreach,
   inbox,
   proposals,
