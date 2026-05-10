@@ -31,17 +31,53 @@ export async function runOutreachDrafter(ctx: AgentContext, job: JobRow): Promis
       .maybeSingle()
     if (!data) throw new Error(`lead ${job.lead_id} not found`)
     let companyDomain: string | null = null
+    let companyResearch: Record<string, unknown> | null = null
     if ((data as { company_id?: string | null }).company_id) {
       const { data: comp } = await supabase
-        .from('crm_companies').select('domain').eq('id', (data as { company_id: string }).company_id).maybeSingle()
-      companyDomain = (comp as { domain: string | null } | null)?.domain ?? null
+        .from('crm_companies').select('domain, research')
+        .eq('id', (data as { company_id: string }).company_id).maybeSingle()
+      const c = comp as { domain: string | null; research: Record<string, unknown> | null } | null
+      companyDomain   = c?.domain   ?? null
+      companyResearch = c?.research ?? null
     }
-    return { ...(data as Record<string, unknown>), company_domain: companyDomain }
+    // Pull the most recent CRM signal for this lead — drafter weaves it
+    // into the opener if it exists ("congrats on the Series B").
+    const { data: sig } = await supabase
+      .from('crm_signals')
+      .select('kind, headline, captured_at')
+      .eq('lead_id', job.lead_id)
+      .order('captured_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    return {
+      ...(data as Record<string, unknown>),
+      company_domain: companyDomain,
+      company_research: companyResearch,
+      latest_signal: sig as { kind: string; headline: string | null; captured_at: string } | null,
+    }
   })
 
   // ── Step 2: AI-draft subject + body ──────────────────────────────
   const draft = await ctx.step('draft', { lead, channel }, async (s) => {
     const settings = await getAISettings()
+    const research = (lead as { company_research?: Record<string, unknown> | null }).company_research
+    const signal   = (lead as { latest_signal?: { kind: string; headline: string | null; captured_at: string } | null }).latest_signal
+    const bodyHint = (job.input?.body_hint as string | undefined) ?? ''
+
+    const researchSection = research && Object.keys(research).length > 0
+      ? `Account research (use exactly one of the pitch_hooks if it fits, naturally):
+${JSON.stringify({
+  pitch_hooks:        research.pitch_hooks,
+  headline_news:      research.headline_news,
+  recent_blog_topics: research.recent_blog_topics,
+  objection_risks:    research.objection_risks,
+}, null, 2)}`
+      : '(no account research yet)'
+
+    const signalSection = signal
+      ? `Latest CRM signal: ${signal.kind} — "${signal.headline ?? '(no headline)'}" (${signal.captured_at})`
+      : '(no recent signal)'
+
     const prompt = `You are an outbound BDR for ${settings?.company_name ?? 'our team'}. Tone: ${settings?.ai_outreach_tone ?? 'professional'}.
 Draft a ${channel === 'email' ? 'short outbound EMAIL (subject + body)' : `${channel} message`} to this prospect.
 
@@ -53,8 +89,14 @@ Lead:
   service interest: ${(lead as { service_interest?: string }).service_interest ?? '(unknown)'}
   prior notes: ${(lead as { notes?: string }).notes ?? '(none)'}
 
+${researchSection}
+
+${signalSection}
+
+${bodyHint ? `Sequence step hint: ${bodyHint}\n` : ''}
 Constraints:
   - 4–7 sentences max, no fluff.
+  - The opener MUST reference something specific from the research or the signal — not "I noticed your company" generic.
   - One specific concrete next step.
   ${settings?.scheduling_url ? `- Include the scheduling link: ${settings.scheduling_url}` : '- Propose 2 specific time windows next week.'}
 

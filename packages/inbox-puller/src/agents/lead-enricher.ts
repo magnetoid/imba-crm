@@ -84,6 +84,16 @@ export async function runLeadEnricher(ctx: AgentContext, job: JobRow): Promise<R
     triggered_by: 'lead-enricher',
   })
 
+  // ── Also queue the account-researcher so the next outreach-drafter
+  // run has pitch_hooks + headline_news to weave into the opener. The
+  // researcher is idempotent and skips if research is <7d old.
+  await supabase.from('crm_agent_jobs').insert({
+    agent_kind: 'account-researcher',
+    lead_id: job.lead_id,
+    input: { reason: 'enrichment-completed' },
+    triggered_by: 'lead-enricher',
+  })
+
   return {
     hunted_email: huntedEmail,
     enriched_apollo: !!enriched,
