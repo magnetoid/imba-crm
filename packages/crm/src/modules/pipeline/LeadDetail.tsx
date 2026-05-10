@@ -70,6 +70,21 @@ export default function LeadDetail() {
   const [sequenceTemplates, setSequenceTemplates] = useState<Array<{ id: string; name: string; description: string | null; steps: number }>>([])
   const [activeSequence, setActiveSequence] = useState<{ id: string; sequence_id: string; current_step: number; status: string; next_due_at: string; sequence_name: string; total_steps: number } | null>(null)
   const [sequenceBusy, setSequenceBusy] = useState(false)
+  const [proposing, setProposing] = useState(false)
+
+  async function generateProposalDraft() {
+    if (!id) return
+    setProposing(true)
+    const { error } = await supabase.from('crm_agent_jobs').insert({
+      agent_kind: 'proposal-writer',
+      lead_id: id,
+      input: { reason: 'manual-from-LeadDetail' },
+      triggered_by: 'lead-detail-ui',
+    })
+    setProposing(false)
+    if (error) { toast.error(error.message); return }
+    toast.success('Proposal draft queued — refresh in ~30s')
+  }
 
   const loadAll = useCallback(async () => {
     if (!id) return
@@ -431,6 +446,18 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "recommendation"}`
             title="Open Nomo with this lead pinned (⌘J also works)"
           >
             <MessageSquareText className="h-3.5 w-3.5 text-primary" /> Discuss with Nomo
+          </Button>
+          <Button
+            variant="outline" size="sm"
+            onClick={generateProposalDraft}
+            disabled={proposing}
+            className="gap-1.5"
+            title="Queue the proposal-writer agent. The draft lands in the Proposals module within a minute."
+          >
+            {proposing
+              ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+              : <FileText className="h-3.5 w-3.5 text-primary" />}
+            Draft proposal
           </Button>
           <Button variant="destructive" size="sm" onClick={deleteLead}>
             <Trash2 className="h-3.5 w-3.5 mr-1.5" />Delete

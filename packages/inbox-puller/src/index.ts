@@ -41,6 +41,7 @@ async function tick(): Promise<number> {
     maybeQueueProspectPipeline(),
     runSignalWatchers(),
     refreshMailReachHealth(),
+    maybeQueueStaleProposalDrafts(),
   ])
 
   const requested = settings.imap_poll_seconds || DEFAULT_INTERVAL_S
@@ -135,6 +136,62 @@ async function main() {
     await new Promise(r => setTimeout(r, sleepFor * 1000))
   }
   log('info', 'inbox-puller exiting cleanly')
+}
+
+// Once per 24h scan for leads stuck in 'qualified' for ≥3 days
+// with no proposal in the last 30d, and queue the proposal-writer
+// agent on each. Default autonomy 'approval' so the operator still
+// reviews. Bounded to 20 leads per sweep.
+let lastProposalCheck = 0
+async function maybeQueueStaleProposalDrafts() {
+  const now = Date.now()
+  if (now - lastProposalCheck < 60 * 60 * 1000) return
+  lastProposalCheck = now
+
+  // Look at one recent finished sweep to gate the daily cadence.
+  const { data: lastJob } = await supabase
+    .from('crm_agent_jobs')
+    .select('finished_at')
+    .eq('agent_kind', 'proposal-writer')
+    .eq('triggered_by', 'cron:stale-qualified')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const last = (lastJob as { finished_at: string | null } | null)?.finished_at
+  if (last && now - new Date(last).getTime() < 24 * 3600 * 1000) return
+
+  // Find candidates: stage='qualified', stage_entered_at older than 3d,
+  // not already in 'won'/'lost', no draft/sent proposal in last 30d.
+  const threeDaysAgo = new Date(now - 3 * 86400 * 1000).toISOString()
+  const { data: leads } = await supabase
+    .from('crm_leads')
+    .select('id, stage_entered_at, name, company')
+    .eq('stage', 'qualified')
+    .lt('stage_entered_at', threeDaysAgo)
+    .limit(20)
+  const candidates = ((leads ?? []) as Array<{ id: string }>)
+  if (candidates.length === 0) return
+
+  let queued = 0
+  for (const c of candidates) {
+    // Skip if a recent proposal exists.
+    const { data: existing } = await supabase
+      .from('crm_proposals')
+      .select('id')
+      .eq('lead_id', c.id)
+      .in('status', ['draft', 'sent', 'signed'])
+      .gte('created_at', new Date(now - 30 * 86400 * 1000).toISOString())
+      .maybeSingle()
+    if (existing) continue
+    await supabase.from('crm_agent_jobs').insert({
+      agent_kind: 'proposal-writer',
+      lead_id: c.id,
+      input: { reason: 'stale-qualified-cron' },
+      triggered_by: 'cron:stale-qualified',
+    })
+    queued++
+  }
+  if (queued > 0) log('info', 'queued proposal-writer for stale qualified', { count: queued })
 }
 
 main().catch(err => {
