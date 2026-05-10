@@ -144,10 +144,11 @@ function SmartSearchPane() {
     void (async () => {
       const { data } = await supabase.from('crm_runtime_settings').select('icp_rules').eq('id', 1).maybeSingle()
       setIcp(((data as { icp_rules?: IcpRulesLite } | null)?.icp_rules) ?? null)
-      const { data: cred } = await supabase
-        .from('crm_provider_credentials')
-        .select('provider').eq('provider', 'apify').maybeSingle()
-      setApifyConfigured(!!cred)
+      // Provider credentials are RLS-restricted to service_role — read
+      // through the security-definer RPC instead.
+      const { data: providers } = await supabase.rpc('list_provider_credentials')
+      const apify = (providers as Array<{ provider: string; has_key: boolean }> | null)?.find(p => p.provider === 'apify')
+      setApifyConfigured(!!apify?.has_key)
     })()
   }, [])
 
