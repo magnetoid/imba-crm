@@ -577,11 +577,3 @@ function MessageCard({ message }: { message: MessageRow }) {
   )
 }
 
-// Suppress unused import warning — keep for future use.
-void Inbox  // shadow check
-void MailQuestion
-void AlertCircle
-void Check
-void Clock
-void ChevronRight
-void MessageSquare
