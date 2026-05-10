@@ -145,9 +145,35 @@ export interface IncomingMessage {
   metadata: Record<string, unknown>
 }
 
+// Skip-sender cache. Reloaded every minute so changes in
+// crm_inbox_skip_senders propagate without a worker restart.
+let skipSenderCache: { patterns: string[]; loadedAt: number } | null = null
+const SKIP_CACHE_MS = 60_000
+async function loadSkipSenders(): Promise<string[]> {
+  const now = Date.now()
+  if (skipSenderCache && now - skipSenderCache.loadedAt < SKIP_CACHE_MS) {
+    return skipSenderCache.patterns
+  }
+  const { data } = await supabase.from('crm_inbox_skip_senders').select('pattern')
+  const patterns = ((data ?? []) as Array<{ pattern: string }>)
+    .map(r => r.pattern.toLowerCase())
+  skipSenderCache = { patterns, loadedAt: now }
+  return patterns
+}
+
 /** Inserts a new inbound row. Returns the row id so the caller can run
  *  AI categorization on it after the fact. */
 export async function insertInboxMessage(m: IncomingMessage): Promise<string | null> {
+  // Skip-sender check first (cheap, in-memory cache).
+  if (m.from_email) {
+    const lower = m.from_email.toLowerCase()
+    const skips = await loadSkipSenders()
+    if (skips.some(p => lower.includes(p))) {
+      // Silently drop — newsletter / no-reply / bounce sender.
+      return null
+    }
+  }
+
   // Try to attach to a known lead by sender email.
   let leadId: string | null = null
   if (m.from_email) {
@@ -177,6 +203,10 @@ export async function insertInboxMessage(m: IncomingMessage): Promise<string | n
     .select('id')
     .maybeSingle()
   if (error) {
+    // Unique-violation on the message_id index is expected during
+    // re-polls / worker restarts and means we already have this email.
+    // Postgres code 23505 = unique_violation.
+    if ((error as { code?: string }).code === '23505') return null
     console.error(JSON.stringify({ msg: 'failed to insert inbox message', subject: m.subject, error: error.message }))
     return null
   }

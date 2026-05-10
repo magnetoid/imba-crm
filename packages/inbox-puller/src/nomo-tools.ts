@@ -580,6 +580,36 @@ const summarizeObjections: NomoTool = {
   },
 }
 
+// ── Phase 11.1: proposal writer ──────────────────────────────────────
+const generateProposal: NomoTool = {
+  name: 'generate_proposal',
+  description:
+    'Draft a structured proposal for a lead. The proposal-writer agent weaves in account research (pitch hooks), call coach-notes (next steps + MEDDPICC), and tracked objections (preempted inline). Returns a crm_proposals row in status=draft that the operator can review and send.',
+  write: true,
+  input_schema: {
+    type: 'object',
+    properties: {
+      lead_id: { type: 'string', description: 'crm_leads.id (uuid)' },
+      force:   { type: 'boolean', description: 'Bypass the 30-day dedup. Default false.' },
+    },
+    required: ['lead_id'],
+  },
+  async run(input) {
+    const { data, error } = await supabase
+      .from('crm_agent_jobs')
+      .insert({
+        agent_kind: 'proposal-writer',
+        lead_id: String(input.lead_id),
+        input: { force: !!input.force },
+        triggered_by: 'nomo',
+      })
+      .select('id, status, autonomy')
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return { ok: true, queued: data }
+  },
+}
+
 // ── Registry ─────────────────────────────────────────────────────────
 export const NOMO_TOOLS: NomoTool[] = [
   // Read (8.2)
@@ -602,6 +632,8 @@ export const NOMO_TOOLS: NomoTool[] = [
   startSequence,
   pauseSequence,
   resumeSequence,
+  // Write (11.1)
+  generateProposal,
 ]
 
 export function findTool(name: string): NomoTool | undefined {
