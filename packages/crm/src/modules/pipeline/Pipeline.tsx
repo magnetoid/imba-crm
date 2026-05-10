@@ -15,6 +15,7 @@ import { Plus, Loader2, Sparkles, Users, TrendingUp, DollarSign, Target, ArrowRi
 import toast from 'react-hot-toast'
 import { autoScoreLead, logActivity, requestNotificationPermission, showNotification } from '@/lib/crm-utils'
 import { logGeneration } from '@/lib/aiGenerations'
+import NomoBrief from './NomoBrief'
 
 export interface CRMLead {
   id: string
@@ -442,6 +443,9 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
           </Button>
         </div>
       </div>
+
+      {/* Nomo daily brief */}
+      <NomoBrief />
 
       {/* Stats bar */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">

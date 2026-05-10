@@ -40,6 +40,7 @@ export default function CRMLayout() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [nomoOpen, setNomoOpen] = useState(false)
   const [nomoLead, setNomoLead] = useState<{ id: string; label: string } | null>(null)
+  const [nomoSeedPrompt, setNomoSeedPrompt] = useState<string | null>(null)
 
   useEffect(() => {
     document.body.classList.add('admin-shell')
@@ -64,12 +65,14 @@ export default function CRMLayout() {
     return () => document.removeEventListener('keydown', onKey)
   }, [])
 
-  // 'nomo:open' custom event lets pages (e.g. Lead Detail's "Discuss
-  // with Nomo" button) open the panel pre-pinned to a lead.
+  // 'nomo:open' custom event lets pages open the panel pre-pinned to
+  // a lead and/or pre-filled with a starter prompt (e.g. the daily
+  // brief's "Suggested actions").
   useEffect(() => {
     function onOpen(e: Event) {
-      const detail = (e as CustomEvent<{ lead_id?: string; lead_label?: string }>).detail
+      const detail = (e as CustomEvent<{ lead_id?: string; lead_label?: string; prompt?: string }>).detail
       if (detail?.lead_id) setNomoLead({ id: detail.lead_id, label: detail.lead_label ?? '' })
+      if (detail?.prompt)  setNomoSeedPrompt(detail.prompt)
       setNomoOpen(true)
     }
     window.addEventListener('nomo:open', onOpen)
@@ -168,9 +171,11 @@ export default function CRMLayout() {
       {/* Nomo: side panel + floating launcher */}
       <NomoPanel
         open={nomoOpen}
-        onClose={() => { setNomoOpen(false); setNomoLead(null) }}
+        onClose={() => { setNomoOpen(false); setNomoLead(null); setNomoSeedPrompt(null) }}
         leadId={nomoLead?.id}
         leadLabel={nomoLead?.label}
+        seedPrompt={nomoSeedPrompt}
+        onSeedConsumed={() => setNomoSeedPrompt(null)}
       />
       {!nomoOpen && (
         <button

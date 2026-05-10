@@ -21,15 +21,30 @@ interface Props {
   compact?: boolean
   /** Optional context line shown above the composer (e.g. "Pinned to: Acme Inc"). */
   pinnedLabel?: string
+  /** Optional starter prompt — when this changes to a non-null value, we
+   *  set it as the composer draft and fire `onSeedConsumed` so the parent
+   *  can clear its pending seed. The composer stays editable. */
+  seedPrompt?: string | null
+  onSeedConsumed?: () => void
 }
 
-export function NomoChat({ messages, streaming, error, onSend, onCancel, onDecide, compact, pinnedLabel }: Props) {
+export function NomoChat({ messages, streaming, error, onSend, onCancel, onDecide, compact, pinnedLabel, seedPrompt, onSeedConsumed }: Props) {
   const [draft, setDraft] = useState('')
   const listRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages, streaming])
+
+  useEffect(() => {
+    if (seedPrompt && !draft) {
+      setDraft(seedPrompt)
+      onSeedConsumed?.()
+    }
+    // We deliberately ignore `draft` in deps — re-injecting the prompt
+    // every keystroke would trash the operator's edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedPrompt])
 
   function submit(e?: FormEvent) {
     e?.preventDefault()

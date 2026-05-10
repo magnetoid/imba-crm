@@ -26,6 +26,7 @@ import { mountCalWebhook } from './webhooks/cal.js'
 import { mountRecordingWebhook } from './webhooks/recording.js'
 import { mountAiProxy } from './ai-proxy.js'
 import { mountNomoApi } from './nomo.js'
+import { mountNomoBrief } from './nomo-brief.js'
 
 const PORT = parseInt(process.env.WORKER_HTTP_PORT || '3030', 10)
 const JWT_SECRET = process.env.JWT_SECRET || ''
@@ -119,6 +120,9 @@ export function startHttpServer() {
 
   // /api/nomo/* — Nomo copilot (Phase 8). SSE chat + thread CRUD.
   mountNomoApi(app)
+
+  // /api/nomo/brief — Phase 9 daily-brief composer for the Pipeline card.
+  mountNomoBrief(app)
 
   // ── Open-pixel ────────────────────────────────────────────────────────
   app.get('/track/pixel/:idgif', async c => {

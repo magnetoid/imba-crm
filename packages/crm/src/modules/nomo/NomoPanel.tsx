@@ -15,9 +15,15 @@ interface Props {
   /** Optional pinned lead context. The hook will pass it to the API. */
   leadId?: string
   leadLabel?: string
+  /** Optional starter prompt — drops into the composer when the panel opens.
+   *  Used by the Pipeline brief's "Suggested actions" buttons. */
+  seedPrompt?: string | null
+  /** Fired once the seed prompt has been pushed into the composer so the
+   *  parent can clear it (otherwise reopening the panel re-injects it). */
+  onSeedConsumed?: () => void
 }
 
-export default function NomoPanel({ open, onClose, leadId, leadLabel }: Props) {
+export default function NomoPanel({ open, onClose, leadId, leadLabel, seedPrompt, onSeedConsumed }: Props) {
   const nomo = useNomo()
 
   const send = (text: string) => nomo.send(text, leadId ? { lead_id: leadId } : undefined)
@@ -89,6 +95,8 @@ export default function NomoPanel({ open, onClose, leadId, leadLabel }: Props) {
             onDecide={nomo.decide}
             compact
             pinnedLabel={leadLabel ? `Pinned to: ${leadLabel}` : undefined}
+            seedPrompt={seedPrompt ?? null}
+            onSeedConsumed={onSeedConsumed}
           />
         </div>
       </aside>
