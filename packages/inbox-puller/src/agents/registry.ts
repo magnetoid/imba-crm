@@ -12,6 +12,7 @@ import { runInboxReplier }    from './inbox-replier.js'
 import { runMeetingBooker }   from './meeting-booker.js'
 import { runLeadScorer }      from './lead-scorer.js'
 import { runDealHealthScorer } from './deal-health-scorer.js'
+import { runCallAnalyzer }     from './call-analyzer.js'
 
 export type AgentRunner = (ctx: AgentContext, job: JobRow) => Promise<Record<string, unknown> | void>
 
@@ -23,6 +24,7 @@ export const AGENT_REGISTRY: Record<string, AgentRunner> = {
   'meeting-booker':     runMeetingBooker,
   'lead-scorer':        runLeadScorer,
   'deal-health-scorer': runDealHealthScorer,
+  'call-analyzer':      runCallAnalyzer,
   // 'proposal-writer':  runProposalWriter,   // future
 }
 

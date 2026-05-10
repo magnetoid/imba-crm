@@ -24,6 +24,21 @@ interface Activity {
   body: string
   created_by: string
   created_at: string
+  recording_url?: string | null
+  transcript_text?: string | null
+  coach_notes?: CoachNotes | null
+}
+
+interface CoachNotes {
+  summary: string
+  next_steps: Array<{ text: string; owner: 'us' | 'them' }>
+  objections: string[]
+  questions_to_ask_next: string[]
+  meddpicc: Record<string, string | undefined>
+  sentiment: 'positive' | 'neutral' | 'negative'
+  score: number
+  ai_model?: string
+  computed_at: string
 }
 
 const ACTIVITY_TYPES = ['note', 'email', 'call', 'meeting', 'proposal', 'follow_up']
@@ -57,7 +72,7 @@ export default function LeadDetail() {
     if (!id) return
     const [leadRes, activitiesRes, emailsRes, proposalsRes, invoicesRes, stagesRes] = await Promise.all([
       supabase.from('crm_leads').select('*').eq('id', id).single(),
-      supabase.from('crm_activities').select('*').eq('lead_id', id).order('created_at', { ascending: false }),
+      supabase.from('crm_activities').select('id, lead_id, type, subject, body, created_by, created_at, recording_url, transcript_text, coach_notes').eq('lead_id', id).order('created_at', { ascending: false }),
       supabase.from('crm_outreach_emails').select('id,subject,status,sent_at,created_at').eq('lead_id', id).order('created_at', { ascending: false }),
       supabase.from('crm_proposals').select('id,title,amount,status,sent_at,signed_at,created_at').eq('lead_id', id).order('created_at', { ascending: false }),
       supabase.from('crm_invoices').select('id,invoice_number,total,status,paid_at,created_at').eq('lead_id', id).order('created_at', { ascending: false }),
@@ -527,8 +542,13 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "recommendation"}`
             />
           </div>
 
+          {/* Call coach cards (one per analysed meeting) */}
+          {activities.filter(a => a.coach_notes && a.coach_notes.summary).map(a => (
+            <CallCoachCard key={a.id} activity={a} />
+          ))}
+
           {/* Activity timeline */}
-          <div className="border border-border rounded-lg p-5">
+          <div className="border border-border rounded-lg p-5 bg-card shadow-sm">
             <h3 className="text-sm font-medium text-foreground mb-4">Activity timeline</h3>
             <form onSubmit={addActivity} className="flex flex-col gap-3 mb-5">
               <div className="flex gap-2">
@@ -769,6 +789,126 @@ function LeadJourney({ createdAt, aiScored, emails, proposals, invoices, stage }
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// ── Call coach card ────────────────────────────────────────────────────
+// Renders the structured coach_notes the call-analyzer agent produces
+// for any crm_activities row of type='meeting' with a recording_url.
+// Operator sees a "what did I miss?" summary, next steps, objections,
+// MEDDPICC qualifiers and a sentiment + momentum score.
+function CallCoachCard({ activity }: { activity: Activity }) {
+  const notes = activity.coach_notes!
+  const sentimentColor =
+    notes.sentiment === 'positive' ? 'text-emerald-700 bg-emerald-50 border-emerald-200' :
+    notes.sentiment === 'negative' ? 'text-red-700 bg-red-50 border-red-200' :
+    'text-slate-700 bg-slate-50 border-slate-200'
+  const scoreColor = notes.score >= 70 ? '#22c55e' : notes.score >= 40 ? '#f59e0b' : '#ef4444'
+  const meddpiccPairs = Object.entries(notes.meddpicc || {}).filter(([, v]) => v && String(v).trim())
+
+  return (
+    <div className="border border-border rounded-lg p-5 bg-card shadow-sm">
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
+            <Calendar className="h-4 w-4 text-primary" />
+          </div>
+          <div>
+            <h3 className="text-sm font-medium text-foreground">
+              {activity.subject || 'Call coach'}
+            </h3>
+            <p className="text-[11px] text-muted-foreground">
+              {new Date(activity.created_at).toLocaleString()}
+              {notes.ai_model ? ` · ${notes.ai_model}` : ''}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`text-xs font-mono px-2 py-0.5 rounded-full border capitalize ${sentimentColor}`}>
+            {notes.sentiment}
+          </span>
+          <div className="flex items-center gap-1.5 text-xs">
+            <div className="w-2 h-2 rounded-full" style={{ background: scoreColor }} />
+            <span className="font-mono font-bold" style={{ color: scoreColor }}>{notes.score}</span>
+          </div>
+        </div>
+      </div>
+
+      {notes.summary && (
+        <p className="text-sm text-foreground leading-relaxed mb-4">{notes.summary}</p>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {notes.next_steps?.length > 0 && (
+          <div>
+            <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Next steps</p>
+            <ul className="space-y-1.5">
+              {notes.next_steps.map((s, i) => (
+                <li key={i} className="text-xs text-foreground flex items-start gap-2">
+                  <span className={`mt-0.5 inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                    s.owner === 'us' ? 'bg-primary' : 'bg-violet-500'
+                  }`} />
+                  <span><span className="font-mono text-muted-foreground">{s.owner}:</span> {s.text}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {notes.objections?.length > 0 && (
+          <div>
+            <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Objections raised</p>
+            <ul className="space-y-1.5">
+              {notes.objections.map((o, i) => (
+                <li key={i} className="text-xs text-foreground flex items-start gap-2">
+                  <span className="mt-0.5 inline-block w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0" />
+                  <span>{o}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
+      {notes.questions_to_ask_next?.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-border">
+          <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Ask next call</p>
+          <ul className="space-y-1.5">
+            {notes.questions_to_ask_next.map((q, i) => (
+              <li key={i} className="text-xs text-foreground">— {q}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {meddpiccPairs.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-border">
+          <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-2">MEDDPICC qualifiers</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {meddpiccPairs.map(([k, v]) => (
+              <div key={k} className="text-xs">
+                <span className="font-mono text-muted-foreground capitalize">{k.replace(/_/g, ' ')}: </span>
+                <span className="text-foreground">{v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activity.recording_url && (
+        <div className="mt-4 pt-4 border-t border-border flex items-center gap-3">
+          <a href={activity.recording_url} target="_blank" rel="noopener noreferrer"
+             className="text-xs text-primary hover:underline flex items-center gap-1">
+            ▶ Watch recording
+          </a>
+          {activity.transcript_text && (
+            <span className="text-xs text-muted-foreground">
+              · transcript {activity.transcript_text.length.toLocaleString()} chars
+            </span>
+          )}
+        </div>
+      )}
     </div>
   )
 }
