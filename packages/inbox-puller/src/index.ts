@@ -6,6 +6,7 @@ import { dispatchAttempts } from './channels/dispatch.js'
 import { pollAgentJobs }   from './agents/loop.js'
 import { dispatchSequences } from './sequences/dispatcher.js'
 import { runSignalWatchers } from './signals/watchers.js'
+import { refreshMailReachHealth } from './deliverability.js'
 import { startHttpServer } from './server.js'
 
 function log(level: 'info' | 'warn' | 'error', msg: string, extra: Record<string, unknown> = {}) {
@@ -38,6 +39,7 @@ async function tick(): Promise<number> {
     pollAgentJobs(),
     maybeQueueDealHealthSweep(),
     runSignalWatchers(),
+    refreshMailReachHealth(),
   ])
 
   const requested = settings.imap_poll_seconds || DEFAULT_INTERVAL_S

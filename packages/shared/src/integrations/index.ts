@@ -19,5 +19,8 @@ export type { CalSlot } from './cal'
 export { parseLoomUrl, buildLoomEmailHtml } from './loom'
 export type { LoomEmbed } from './loom'
 
+export { listInboxes as listMailReachInboxes, latestPlacement as latestMailReachPlacement } from './mailreach'
+export type { MailReachInbox, MailReachPlacement } from './mailreach'
+
 export { IntegrationError } from './_creds'
 export type { ProviderCredential } from './_creds'

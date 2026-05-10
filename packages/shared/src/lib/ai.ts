@@ -274,6 +274,7 @@ export async function getCRMRuntimeSettings(): Promise<CRMRuntimeSettings> {
     'lead_sources_enabled', 'outreach_daily_limit',
     'ai_monthly_cap_cents', 'ai_soft_cap_cents', 'ai_cap_action',
     'nomo_enabled', 'nomo_mode', 'nomo_autopilot_tools', 'nomo_system_prompt',
+    'smtp_inbox_health', 'smtp_inbox_health_at',
   ].join(',')
 
   const { data, error } = await supabase

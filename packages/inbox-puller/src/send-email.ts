@@ -6,6 +6,17 @@
 // crm_email_events, then flips the row to status='sent' with sent_at = now().
 // On failure: marks status='failed' with rejection_reason and bounced_at.
 
+// Classify SMTP bounce strings into a small enum so the sender_health
+// view can roll them up. Any RFC-3463 5.x.x permanent-failure code is
+// 'hard'; 4.x.x is 'soft'; quota / mailbox-full is 'mailbox_full'.
+function classifyBounce(s: string): string {
+  if (/5\.\d\.\d|550|552|553|554/.test(s) || /mailbox.*not.*found|user.*unknown|recipient.*rejected/i.test(s)) return 'hard'
+  if (/4\.\d\.\d|421|450|451/.test(s) || /try again later|temporary/i.test(s)) return 'soft'
+  if (/mailbox.*full|over.*quota|message size exceeds/i.test(s)) return 'mailbox_full'
+  if (/spam|blacklist|blocked|reputation/i.test(s)) return 'reputation'
+  return 'other'
+}
+
 import nodemailer, { type Transporter } from 'nodemailer'
 import { supabase, getProviderSecret } from './supabase.js'
 
@@ -166,15 +177,19 @@ export async function pollOutreach() {
       log('info', 'email sent', { id: row.id, to: recipient, message_id: info.messageId })
     } catch (err) {
       const message = (err as Error).message
+      const reason = classifyBounce(message)
       await supabase.from('crm_outreach_emails')
         .update({
           status: 'failed',
           rejection_reason: message.slice(0, 500),
+          bounce_reason: reason,
+          last_error: message.slice(0, 500),
+          last_error_at: new Date().toISOString(),
           bounced_at: new Date().toISOString(),
         })
         .eq('id', row.id)
-      await recordEvent(row.id, 'send_failed', { error: message })
-      log('error', 'email send failed', { id: row.id, to: recipient, error: message })
+      await recordEvent(row.id, 'send_failed', { error: message, bounce_reason: reason })
+      log('error', 'email send failed', { id: row.id, to: recipient, error: message, bounce_reason: reason })
     }
   }
 }

@@ -733,6 +733,8 @@ export default function AISettings() {
           <Button onClick={() => void saveAll()} disabled={saving} className="gap-2">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save settings</Button>
           <Button variant="outline" onClick={testSmtp} disabled={testingSmtp || !settings.smtp_host || !settings.smtp_username} className="gap-2">{testingSmtp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />} Test SMTP</Button>
         </div>
+
+        <SenderHealthCard inboxHealth={(settings as unknown as { smtp_inbox_health?: SmtpInboxHealth }).smtp_inbox_health ?? null} />
       </section>}
 
       {/* ── Inbound mail (IMAP) ─────────────────────────────────── */}
@@ -918,6 +920,125 @@ export default function AISettings() {
         </div>
       </section>}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Phase 10.5: deliverability card ──────────────────────────────────
+interface SmtpInboxHealth {
+  inboxes?: Array<{
+    email: string
+    status: string
+    warmup_score?: number | null
+    sender_score?: number | null
+    deliverability?: number | null
+    placement?: { inbox_pct: number; promotions_pct: number; spam_pct: number; measured_at: string } | null
+  }>
+  fetched_at?: string
+}
+
+function SenderHealthCard({ inboxHealth }: { inboxHealth: SmtpInboxHealth | null }) {
+  const [domainStats, setDomainStats] = useState<Array<{
+    sender_domain: string
+    total_30d: number
+    sent_30d: number
+    opened_30d: number
+    replied_30d: number
+    bounced_30d: number
+    complained_30d: number
+  }>>([])
+
+  useEffect(() => {
+    void (async () => {
+      const { data } = await supabase.from('crm_sender_health').select('*')
+      setDomainStats((data as typeof domainStats | null) ?? [])
+    })()
+  }, [])
+
+  const inboxes = inboxHealth?.inboxes ?? []
+
+  return (
+    <div className="mt-6 pt-6 border-t border-border">
+      <div className="flex items-center gap-2 mb-1">
+        <Zap className="h-4 w-4 text-primary" />
+        <h3 className="font-medium">Sender health</h3>
+      </div>
+      <p className="text-xs text-muted-foreground mb-4">
+        Deliverability matters more than features in 2026. Configure MailReach in Integrations and the worker
+        refreshes warmup + inbox-placement every 12h.
+      </p>
+
+      {/* MailReach panel */}
+      <div className="bg-card border border-border rounded-lg p-4 mb-3">
+        <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground mb-2">
+          MailReach warmup {inboxHealth?.fetched_at && <span className="opacity-60">· refreshed {new Date(inboxHealth.fetched_at).toLocaleString()}</span>}
+        </p>
+        {inboxes.length === 0 ? (
+          <p className="text-sm text-muted-foreground italic">
+            No MailReach data yet. Add a MailReach key under Integrations and enroll your outbound inbox
+            (apps.mailreach.co → Email accounts).
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {inboxes.map(i => (
+              <div key={i.email} className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <p className="font-mono">{i.email}</p>
+                  <p className="text-[10px] text-muted-foreground">{i.status}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground">Warmup score</p>
+                  <p className="font-mono font-bold text-base">{i.warmup_score ?? '–'}/100</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground">Sender score</p>
+                  <p className="font-mono font-bold text-base">{i.sender_score ?? '–'}</p>
+                </div>
+                {i.placement && (
+                  <div className="md:col-span-1">
+                    <p className="text-[10px] text-muted-foreground mb-1">Placement</p>
+                    <div className="flex h-2 rounded-full overflow-hidden">
+                      <div className="bg-emerald-500" style={{ width: `${i.placement.inbox_pct}%` }} />
+                      <div className="bg-amber-500"   style={{ width: `${i.placement.promotions_pct}%` }} />
+                      <div className="bg-red-500"     style={{ width: `${i.placement.spam_pct}%` }} />
+                    </div>
+                    <p className="text-[10px] mt-0.5 text-muted-foreground">
+                      {i.placement.inbox_pct}% inbox · {i.placement.promotions_pct}% promo · {i.placement.spam_pct}% spam
+                    </p>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Per-domain stats from outbox */}
+      <div className="bg-card border border-border rounded-lg p-4">
+        <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground mb-2">
+          Send + bounce stats (last 30d)
+        </p>
+        {domainStats.length === 0 ? (
+          <p className="text-sm text-muted-foreground italic">No outbound send activity yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {domainStats.map(d => {
+              const bouncePct   = d.sent_30d > 0 ? (d.bounced_30d / d.sent_30d) * 100 : 0
+              const replyPct    = d.sent_30d > 0 ? (d.replied_30d / d.sent_30d) * 100 : 0
+              const bounceColor = bouncePct >= 5 ? 'text-red-700' : bouncePct >= 2 ? 'text-amber-700' : 'text-emerald-700'
+              return (
+                <div key={d.sender_domain} className="grid grid-cols-1 sm:grid-cols-5 gap-2 text-xs">
+                  <p className="font-mono">{d.sender_domain || '(no domain)'}</p>
+                  <p>sent <span className="font-mono font-medium">{d.sent_30d}</span></p>
+                  <p>opens <span className="font-mono font-medium">{d.opened_30d}</span></p>
+                  <p>replies <span className="font-mono font-medium text-emerald-700">{d.replied_30d}</span> ({replyPct.toFixed(1)}%)</p>
+                  <p>bounces <span className={`font-mono font-medium ${bounceColor}`}>{d.bounced_30d}</span> ({bouncePct.toFixed(1)}%)</p>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )
