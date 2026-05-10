@@ -4,6 +4,7 @@ import { pollPop3 } from './pop3.js'
 import { pollOutreach } from './send-email.js'
 import { dispatchAttempts } from './channels/dispatch.js'
 import { pollAgentJobs }   from './agents/loop.js'
+import { dispatchSequences } from './sequences/dispatcher.js'
 import { startHttpServer } from './server.js'
 
 function log(level: 'info' | 'warn' | 'error', msg: string, extra: Record<string, unknown> = {}) {
@@ -32,6 +33,7 @@ async function tick(): Promise<number> {
     pollPop3(settings),
     pollOutreach(),
     dispatchAttempts(),
+    dispatchSequences(),
     pollAgentJobs(),
     maybeQueueDealHealthSweep(),
   ])

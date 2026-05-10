@@ -67,16 +67,21 @@ export default function LeadDetail() {
   const [leadProposals, setLeadProposals] = useState<Array<{ id: string; title: string; amount: number | null; status: string; sent_at: string | null; signed_at: string | null; created_at: string }>>([])
   const [leadInvoices, setLeadInvoices] = useState<Array<{ id: string; invoice_number: string; total: number; status: string; paid_at: string | null; created_at: string }>>([])
   const [stageRequirements, setStageRequirements] = useState<Record<string, Record<string, true>>>({})
+  const [sequenceTemplates, setSequenceTemplates] = useState<Array<{ id: string; name: string; description: string | null; steps: number }>>([])
+  const [activeSequence, setActiveSequence] = useState<{ id: string; sequence_id: string; current_step: number; status: string; next_due_at: string; sequence_name: string; total_steps: number } | null>(null)
+  const [sequenceBusy, setSequenceBusy] = useState(false)
 
   const loadAll = useCallback(async () => {
     if (!id) return
-    const [leadRes, activitiesRes, emailsRes, proposalsRes, invoicesRes, stagesRes] = await Promise.all([
+    const [leadRes, activitiesRes, emailsRes, proposalsRes, invoicesRes, stagesRes, templatesRes, assignmentRes] = await Promise.all([
       supabase.from('crm_leads').select('*').eq('id', id).single(),
       supabase.from('crm_activities').select('id, lead_id, type, subject, body, created_by, created_at, recording_url, transcript_text, coach_notes').eq('lead_id', id).order('created_at', { ascending: false }),
       supabase.from('crm_outreach_emails').select('id,subject,status,sent_at,created_at').eq('lead_id', id).order('created_at', { ascending: false }),
       supabase.from('crm_proposals').select('id,title,amount,status,sent_at,signed_at,created_at').eq('lead_id', id).order('created_at', { ascending: false }),
       supabase.from('crm_invoices').select('id,invoice_number,total,status,paid_at,created_at').eq('lead_id', id).order('created_at', { ascending: false }),
       supabase.from('crm_pipeline_stages').select('key, required'),
+      supabase.from('crm_outreach_sequences').select('id, name, description, steps').eq('is_active', true),
+      supabase.from('crm_lead_sequences').select('id, sequence_id, current_step, status, next_due_at').eq('lead_id', id).in('status', ['active','paused']).order('created_at', { ascending: false }).limit(1).maybeSingle(),
     ])
     setLead(leadRes.data)
     setActivities(activitiesRes.data || [])
@@ -88,8 +93,72 @@ export default function LeadDetail() {
       reqs[r.key] = (r.required as Record<string, true>) ?? {}
     }
     setStageRequirements(reqs)
+    const tpls = (templatesRes.data || []) as Array<{ id: string; name: string; description: string | null; steps: unknown[] }>
+    setSequenceTemplates(tpls.map(t => ({ id: t.id, name: t.name, description: t.description, steps: Array.isArray(t.steps) ? t.steps.length : 0 })))
+    const a = assignmentRes.data as { id: string; sequence_id: string; current_step: number; status: string; next_due_at: string } | null
+    if (a) {
+      const tpl = tpls.find(t => t.id === a.sequence_id)
+      setActiveSequence({
+        id: a.id, sequence_id: a.sequence_id, current_step: a.current_step, status: a.status, next_due_at: a.next_due_at,
+        sequence_name: tpl?.name ?? '(removed template)',
+        total_steps: tpl ? (Array.isArray(tpl.steps) ? tpl.steps.length : 0) : 0,
+      })
+    } else {
+      setActiveSequence(null)
+    }
     setLoading(false)
   }, [id])
+
+  async function startSequence(sequenceId: string) {
+    if (!id || !sequenceId) return
+    setSequenceBusy(true)
+    // Cancel any currently active/paused row first.
+    await supabase.from('crm_lead_sequences')
+      .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_reason: 'replaced_in_ui' })
+      .eq('lead_id', id).in('status', ['active','paused'])
+    const { error } = await supabase.from('crm_lead_sequences').insert({
+      lead_id: id, sequence_id: sequenceId, next_due_at: new Date().toISOString(),
+    })
+    setSequenceBusy(false)
+    if (error) { toast.error(error.message); return }
+    toast.success('Sequence started — first step fires within a minute')
+    loadAll()
+  }
+
+  async function pauseSequence() {
+    if (!activeSequence) return
+    setSequenceBusy(true)
+    const { error } = await supabase.from('crm_lead_sequences')
+      .update({ status: 'paused' }).eq('id', activeSequence.id)
+    setSequenceBusy(false)
+    if (error) { toast.error(error.message); return }
+    toast.success('Sequence paused')
+    loadAll()
+  }
+
+  async function resumeSequence() {
+    if (!activeSequence) return
+    setSequenceBusy(true)
+    const { error } = await supabase.from('crm_lead_sequences')
+      .update({ status: 'active', next_due_at: new Date().toISOString() })
+      .eq('id', activeSequence.id)
+    setSequenceBusy(false)
+    if (error) { toast.error(error.message); return }
+    toast.success('Sequence resumed')
+    loadAll()
+  }
+
+  async function cancelSequence() {
+    if (!activeSequence) return
+    setSequenceBusy(true)
+    const { error } = await supabase.from('crm_lead_sequences')
+      .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_reason: 'cancelled_in_ui' })
+      .eq('id', activeSequence.id)
+    setSequenceBusy(false)
+    if (error) { toast.error(error.message); return }
+    toast.success('Sequence cancelled')
+    loadAll()
+  }
 
   useEffect(() => { loadAll() }, [loadAll])
 
@@ -550,6 +619,71 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "recommendation"}`
               invoices={leadInvoices}
               stage={lead.stage}
             />
+          </div>
+
+          {/* Outreach sequence */}
+          <div className="border border-border rounded-lg p-5 bg-card shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-foreground">Outreach cadence</h3>
+              {activeSequence && (
+                <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full border ${
+                  activeSequence.status === 'active'
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                    : 'border-amber-300 bg-amber-50 text-amber-700'
+                }`}>{activeSequence.status}</span>
+              )}
+            </div>
+            {activeSequence ? (
+              <div>
+                <p className="text-sm font-medium text-foreground">{activeSequence.sequence_name}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Step {activeSequence.current_step + 1}/{activeSequence.total_steps}
+                  {activeSequence.status === 'active' && (
+                    <> · next due {new Date(activeSequence.next_due_at).toLocaleString()}</>
+                  )}
+                </p>
+                <div className="h-1.5 bg-muted rounded-full overflow-hidden mt-2 mb-4">
+                  <div
+                    className="h-full bg-primary transition-all duration-700"
+                    style={{ width: `${activeSequence.total_steps > 0 ? Math.round((activeSequence.current_step / activeSequence.total_steps) * 100) : 0}%` }}
+                  />
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {activeSequence.status === 'active' ? (
+                    <Button size="sm" variant="outline" disabled={sequenceBusy} onClick={pauseSequence}>Pause</Button>
+                  ) : (
+                    <Button size="sm" disabled={sequenceBusy} onClick={resumeSequence}>Resume</Button>
+                  )}
+                  <Button size="sm" variant="outline" disabled={sequenceBusy} onClick={cancelSequence}
+                    className="text-red-700 border-red-200 hover:bg-red-50">Cancel</Button>
+                  <span className="text-[11px] text-muted-foreground ml-auto">
+                    Replies auto-cancel the cadence (Phase 7d).
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <p className="text-xs text-muted-foreground mb-3">
+                  No active sequence. Pick a template to start a multi-touch cadence.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {sequenceTemplates.map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => startSequence(t.id)}
+                      disabled={sequenceBusy}
+                      className="text-left rounded-md border border-border bg-muted/30 hover:bg-muted px-3 py-2 transition-colors"
+                    >
+                      <div className="text-xs font-medium text-foreground">{t.name}</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">
+                        {t.steps} step{t.steps === 1 ? '' : 's'}
+                        {t.description && <> · {t.description.slice(0, 64)}…</>}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Call coach cards (one per analysed meeting) */}

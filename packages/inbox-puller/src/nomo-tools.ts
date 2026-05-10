@@ -441,6 +441,106 @@ const assignLead: NomoTool = {
   },
 }
 
+// ── Phase 10.1: Sequence tools ───────────────────────────────────────
+const startSequence: NomoTool = {
+  name: 'start_sequence',
+  description:
+    'Assign a lead to an outreach sequence (3-touch warm follow-up, 7-touch cold, re-engagement, or any custom). The dispatcher will materialise an outbound attempt for each step at its scheduled day_offset. Cancels any currently active sequence on the lead.',
+  write: true,
+  input_schema: {
+    type: 'object',
+    properties: {
+      lead_id:     { type: 'string' },
+      sequence_id: { type: 'string', description: 'crm_outreach_sequences.id (uuid)' },
+      start_now:   { type: 'boolean', description: 'If true, the first step fires immediately. Default true.' },
+    },
+    required: ['lead_id', 'sequence_id'],
+  },
+  async run(input) {
+    // Cancel any currently active sequence so the unique-active-per-lead
+    // constraint is happy.
+    await supabase.from('crm_lead_sequences')
+      .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_reason: 'replaced_by_nomo' })
+      .eq('lead_id', String(input.lead_id))
+      .eq('status', 'active')
+
+    const startNow = input.start_now !== false
+    const { data, error } = await supabase.from('crm_lead_sequences').insert({
+      lead_id: String(input.lead_id),
+      sequence_id: String(input.sequence_id),
+      next_due_at: startNow ? new Date().toISOString() : new Date(Date.now() + 86400_000).toISOString(),
+    }).select('id, status, current_step, next_due_at').maybeSingle()
+    if (error) throw new Error(error.message)
+    return { ok: true, assignment: data }
+  },
+}
+
+const pauseSequence: NomoTool = {
+  name: 'pause_sequence',
+  description:
+    'Pause the lead\'s currently active sequence. Use resume_sequence to continue later, or start_sequence to swap templates.',
+  write: true,
+  input_schema: {
+    type: 'object',
+    properties: { lead_id: { type: 'string' } },
+    required: ['lead_id'],
+  },
+  async run(input) {
+    const { data, error } = await supabase.from('crm_lead_sequences')
+      .update({ status: 'paused' })
+      .eq('lead_id', String(input.lead_id))
+      .eq('status', 'active')
+      .select('id').maybeSingle()
+    if (error) throw new Error(error.message)
+    return { ok: true, paused: !!data }
+  },
+}
+
+const resumeSequence: NomoTool = {
+  name: 'resume_sequence',
+  description:
+    'Resume the lead\'s most recently paused sequence. The next step fires immediately.',
+  write: true,
+  input_schema: {
+    type: 'object',
+    properties: { lead_id: { type: 'string' } },
+    required: ['lead_id'],
+  },
+  async run(input) {
+    const { data: paused } = await supabase.from('crm_lead_sequences')
+      .select('id').eq('lead_id', String(input.lead_id)).eq('status', 'paused')
+      .order('created_at', { ascending: false }).limit(1).maybeSingle()
+    const row = paused as { id: string } | null
+    if (!row) return { ok: false, error: 'no paused sequence on this lead' }
+    const { error } = await supabase.from('crm_lead_sequences')
+      .update({ status: 'active', next_due_at: new Date().toISOString() })
+      .eq('id', row.id)
+    if (error) throw new Error(error.message)
+    return { ok: true, resumed: row.id }
+  },
+}
+
+const listSequences: NomoTool = {
+  name: 'list_sequences',
+  description:
+    'List the available outreach sequence templates (each has a name, step count, and id you can pass to start_sequence).',
+  input_schema: { type: 'object', properties: {} },
+  async run() {
+    const { data, error } = await supabase
+      .from('crm_outreach_sequences')
+      .select('id, name, description, steps')
+      .eq('is_active', true)
+      .order('name', { ascending: true })
+    if (error) throw new Error(error.message)
+    return {
+      sequences: (data ?? []).map(s => {
+        const r = s as { id: string; name: string; description: string | null; steps: unknown[] }
+        return { id: r.id, name: r.name, description: r.description, step_count: Array.isArray(r.steps) ? r.steps.length : 0 }
+      }),
+    }
+  },
+}
+
 // ── Registry ─────────────────────────────────────────────────────────
 export const NOMO_TOOLS: NomoTool[] = [
   // Read (8.2)
@@ -450,6 +550,7 @@ export const NOMO_TOOLS: NomoTool[] = [
   getMetrics,
   summarizePeriod,
   findRecentSignals,
+  listSequences,                // 10.1
   // Write (8.3)
   enqueueAgent,
   moveLeadStage,
@@ -457,6 +558,10 @@ export const NOMO_TOOLS: NomoTool[] = [
   setFollowUp,
   tickExitChecklist,
   assignLead,
+  // Write (10.1)
+  startSequence,
+  pauseSequence,
+  resumeSequence,
 ]
 
 export function findTool(name: string): NomoTool | undefined {

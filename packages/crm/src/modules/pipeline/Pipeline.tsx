@@ -46,6 +46,8 @@ export interface CRMLead {
   next_follow_up?: string
   created_at: string
   updated_at: string
+  /** Populated client-side from crm_lead_sequences. Not on the DB row. */
+  active_sequence?: { id: string; name: string; current_step: number; total_steps: number; next_due_at: string }
 }
 
 // Composite "next-best-action" score used to rank leads inside a stage.
@@ -95,8 +97,35 @@ export default function CRMDashboard() {
 
   const loadLeads = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase.from('crm_leads').select('*').order('created_at', { ascending: false })
-    setLeads(data || [])
+    const [leadsRes, sequencesRes, templatesRes] = await Promise.all([
+      supabase.from('crm_leads').select('*').order('created_at', { ascending: false }),
+      supabase.from('crm_lead_sequences')
+        .select('id, lead_id, sequence_id, current_step, status, next_due_at')
+        .eq('status', 'active'),
+      supabase.from('crm_outreach_sequences').select('id, name, steps'),
+    ])
+    const leads = (leadsRes.data || []) as CRMLead[]
+    const seqs = (sequencesRes.data || []) as Array<{ id: string; lead_id: string; sequence_id: string; current_step: number; next_due_at: string }>
+    const tpls = new Map<string, { name: string; total_steps: number }>()
+    for (const t of (templatesRes.data || []) as Array<{ id: string; name: string; steps: unknown[] }>) {
+      tpls.set(t.id, { name: t.name, total_steps: Array.isArray(t.steps) ? t.steps.length : 0 })
+    }
+    const seqByLead = new Map<string, CRMLead['active_sequence']>()
+    for (const s of seqs) {
+      const tpl = tpls.get(s.sequence_id)
+      seqByLead.set(s.lead_id, {
+        id: s.id,
+        name: tpl?.name ?? 'sequence',
+        current_step: s.current_step,
+        total_steps: tpl?.total_steps ?? 0,
+        next_due_at: s.next_due_at,
+      })
+    }
+    for (const l of leads) {
+      const a = seqByLead.get(l.id)
+      if (a) l.active_sequence = a
+    }
+    setLeads(leads)
     setLoading(false)
   }, [])
 
@@ -799,6 +828,14 @@ function LeadCard({
 
       {lead.service_interest && (
         <p className="text-xs text-muted-foreground mb-2 truncate">{lead.service_interest}</p>
+      )}
+
+      {lead.active_sequence && (
+        <p className="text-[11px] mb-2 flex items-center gap-1 text-primary"
+           title={`Next step due ${new Date(lead.active_sequence.next_due_at).toLocaleString()}`}>
+          <span className="inline-block w-1 h-1 rounded-full bg-primary animate-pulse" />
+          ▶ {lead.active_sequence.name} · step {lead.active_sequence.current_step + 1}/{lead.active_sequence.total_steps}
+        </p>
       )}
 
       {isOverdue && (
