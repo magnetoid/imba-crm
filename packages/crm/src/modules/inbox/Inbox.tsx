@@ -1,22 +1,64 @@
-import { useState, useEffect, useCallback } from 'react'
+// CRM Inbox — Phase 12 rebuild.
+//
+// 3-pane mail client:
+//   ┌──────────────┬─────────────────────────┬──────────────────┐
+//   │ Thread list  │ Selected thread         │ Composer +      │
+//   │ (left)       │ (middle, oldest→newest) │ AI tools (right)│
+//   └──────────────┴─────────────────────────┴──────────────────┘
+//
+// Reads `crm_inbox_threads` view (one row per thread_key with rollups).
+// Click a thread → fetches all messages with that thread_key.
+//
+// Caching:
+//   - Thread list is mirrored to sessionStorage. On mount we render the
+//     cache instantly, then fire a delta-fetch (threads with
+//     last_message_at > cache cursor) and merge.
+//   - Message bodies are fetched on first click and kept in-memory for
+//     the session. Navigating back to a thread doesn't refetch.
+//
+// AI compose (via /api/inbox/*):
+//   - "Suggest replies" → 3 one-click options (Instant Reply pattern)
+//   - "Write with prompt" → operator types intent, AI drafts the body
+//   - "Rewrite as <tone>" → operator typed something, AI rewrites
+//
+// Templates: pulls from crm_templates (existing table), {{name}}
+// {{company}} merge fields resolved from the lead row.
+//
+// Keyboard: j/k = next/prev thread · r = reply · e = archive ·
+//           ⌘⏎ = send · ⌘k = focus search
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@imba/shared/supabase'
-import { callAIJSON, getCRMRuntimeSettings } from '@imba/shared/lib/ai'
-import { logGeneration } from '@/lib/aiGenerations'
 import { Button } from '@imba/shared/ui/button'
 import { Input } from '@imba/shared/ui/input'
-import { Label } from '@imba/shared/ui/label'
 import { Textarea } from '@imba/shared/ui/textarea'
-import { Badge } from '@imba/shared/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@imba/shared/ui/select'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@imba/shared/ui/dialog'
+import { Badge } from '@imba/shared/ui/badge'
 import toast from 'react-hot-toast'
 import {
-  Inbox, Mail, Sparkles, Loader2, Plus, Archive, Reply,
-  ArrowDownLeft, ArrowUpRight, AlertCircle, CheckCircle2, MessageSquare, Search,
+  Inbox as InboxIcon, Loader2, RefreshCw, Send, Sparkles, Wand2, Archive,
+  MailQuestion, Reply, Search, Clock, ChevronRight, ChevronDown, Check,
+  AlertCircle, ChevronUp, MessageSquare,
 } from 'lucide-react'
 
-interface InboxMessage {
+interface ThreadRow {
+  thread_key: string
+  subject: string
+  last_message_at: string
+  first_message_at: string
+  message_count: number
+  unread_count: number
+  has_inbound: boolean
+  last_from_email: string | null
+  first_lead_id: string | null
+  latest_ai_category: string | null
+  latest_ai_sentiment: string | null
+  is_snoozed: boolean
+}
+
+interface MessageRow {
   id: string
+  thread_key: string
   lead_id: string | null
   direction: 'inbound' | 'outbound'
   subject: string | null
@@ -24,389 +66,522 @@ interface InboxMessage {
   from_email: string | null
   to_email: string | null
   status: string
-  ai_sentiment: string | null
   ai_category: string | null
+  ai_sentiment: string | null
   ai_suggested_reply: string | null
   received_at: string
-  metadata?: {
-    source?: string
-    conversation_id?: string
-    visitor_name?: string
-  } | null
-  crm_leads?: { name: string; company: string } | null
+  metadata: Record<string, unknown> | null
 }
 
-interface CRMLead { id: string; name: string; company: string; email: string }
+interface TemplateRow { id: string; name: string; subject: string | null; content: string }
 
-const SENTIMENT_COLOR: Record<string, string> = {
-  positive: 'text-emerald-700 border-emerald-400/30',
-  neutral:  'text-muted-foreground border-border',
-  negative: 'text-red-700 border-red-400/30',
+interface LeadRow { id: string; name: string; email: string | null; company: string | null }
+
+type Tab = 'all' | 'needs_reply' | 'fyi' | 'sent' | 'snoozed'
+
+const CACHE_KEY = 'inbox_threads_cache_v2'
+const MESSAGE_CACHE = new Map<string, MessageRow[]>()  // in-memory, by thread_key
+
+interface Cache { threads: ThreadRow[]; fetched_at: string }
+function readCache(): Cache | null {
+  try { const raw = sessionStorage.getItem(CACHE_KEY); return raw ? JSON.parse(raw) as Cache : null }
+  catch { return null }
 }
-const CATEGORY_ICON: Record<string, typeof Mail> = {
-  question: MessageSquare, objection: AlertCircle, meeting_request: CheckCircle2, bounce: AlertCircle,
+function writeCache(c: Cache) {
+  try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(c)) } catch { /* private mode */ }
+}
+
+async function authHeaders(): Promise<HeadersInit> {
+  const { data } = await supabase.auth.getSession()
+  const token = data.session?.access_token
+  return token ? { 'content-type': 'application/json', Authorization: `Bearer ${token}` } : { 'content-type': 'application/json' }
 }
 
 export default function AIInbox() {
-    const [messages, setMessages] = useState<InboxMessage[]>([])
-  const [leads, setLeads] = useState<CRMLead[]>([])
-  const [loading, setLoading] = useState(true)
-  const [selected, setSelected] = useState<InboxMessage | null>(null)
-  const [filter, setFilter] = useState<'all' | 'unread' | 'inbound' | 'outbound' | 'widget'>('all')
-  const [widgetReply, setWidgetReply] = useState('')
-  const [sendingWidgetReply, setSendingWidgetReply] = useState(false)
+  const [threads, setThreads] = useState<ThreadRow[]>(() => readCache()?.threads ?? [])
+  const [refreshing, setRefreshing] = useState(false)
+  const [tab, setTab] = useState<Tab>('all')
   const [search, setSearch] = useState('')
-  const [addDialog, setAddDialog] = useState(false)
-  const [analyzing, setAnalyzing] = useState<string | null>(null)
-  const [addForm, setAddForm] = useState({
-    lead_id: '', direction: 'inbound' as 'inbound' | 'outbound',
-    subject: '', body: '', from_email: '', to_email: '',
-  })
-  const [saving, setSaving] = useState(false)
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [messages, setMessages] = useState<MessageRow[]>([])
+  const [lead, setLead] = useState<LeadRow | null>(null)
+  const [loadingThread, setLoadingThread] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const [suggestions, setSuggestions] = useState<Array<{ label: string; text: string }> | null>(null)
+  const [suggestBusy, setSuggestBusy] = useState(false)
+  const [rewriteBusy, setRewriteBusy] = useState(false)
+  const [composePrompt, setComposePrompt] = useState('')
+  const [composeBusy, setComposeBusy] = useState(false)
+  const [templates, setTemplates] = useState<TemplateRow[]>([])
+  const searchRef = useRef<HTMLInputElement | null>(null)
+  const composerRef = useRef<HTMLTextAreaElement | null>(null)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    const [msgsRes, leadsRes] = await Promise.all([
-      supabase.from('crm_inbox_messages').select('*, crm_leads(name, company)').order('received_at', { ascending: false }),
-      supabase.from('crm_leads').select('id,name,company,email').order('name'),
-    ])
-    setMessages((msgsRes.data as InboxMessage[]) || [])
-    setLeads((leadsRes.data as CRMLead[]) || [])
-    setLoading(false)
+  // ── Initial load + delta fetch ──────────────────────────────────────
+  const fetchThreads = useCallback(async (mode: 'delta' | 'full' = 'delta') => {
+    setRefreshing(true)
+    const cache = readCache()
+    let query = supabase.from('crm_inbox_threads')
+      .select('*').order('last_message_at', { ascending: false }).limit(500)
+    if (mode === 'delta' && cache?.fetched_at) {
+      query = query.gt('last_message_at', cache.fetched_at)
+    }
+    const { data, error } = await query
+    setRefreshing(false)
+    if (error) { toast.error(error.message); return }
+    const fresh = (data as ThreadRow[] | null) ?? []
+    setThreads(prev => {
+      const merged = mergeThreads(mode === 'full' ? [] : prev, fresh)
+      writeCache({ threads: merged, fetched_at: new Date().toISOString() })
+      return merged
+    })
   }, [])
 
-  useEffect(() => { load() }, [load])
+  function mergeThreads(prev: ThreadRow[], fresh: ThreadRow[]): ThreadRow[] {
+    const byKey = new Map<string, ThreadRow>()
+    for (const t of prev) byKey.set(t.thread_key, t)
+    for (const t of fresh) byKey.set(t.thread_key, t)   // fresh wins on overlap
+    return Array.from(byKey.values())
+      .sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime())
+  }
 
-  async function analyzeMessage(msg: InboxMessage) {
-    setAnalyzing(msg.id)
-    const prompt = `Analyze this email reply to a video production sales outreach.
+  useEffect(() => { void fetchThreads('delta') }, [fetchThreads])
 
-From: ${msg.from_email || 'unknown'}
-Subject: ${msg.subject || '(no subject)'}
-Body: ${msg.body}
+  // Load templates once.
+  useEffect(() => {
+    void (async () => {
+      const { data } = await supabase.from('crm_templates').select('id, name, subject, content').order('name')
+      setTemplates(((data as TemplateRow[] | null) ?? []))
+    })()
+  }, [])
 
-Return ONLY valid JSON: {"sentiment":"positive|neutral|negative","category":"question|objection|meeting_request|bounce","suggested_reply":"string"}`
-    try {
-      const runtime = await getCRMRuntimeSettings()
-      const json = await callAIJSON<{ sentiment: string; category: string; suggested_reply: string }>(prompt, { maxTokens: 500 })
-      await supabase.from('crm_inbox_messages').update({ ai_sentiment: json.sentiment, ai_category: json.category, ai_suggested_reply: json.suggested_reply, status: 'read' }).eq('id', msg.id)
-      setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, ai_sentiment: json.sentiment, ai_category: json.category, ai_suggested_reply: json.suggested_reply, status: 'read' } : m))
-      if (selected?.id === msg.id) setSelected(p => p ? { ...p, ai_sentiment: json.sentiment, ai_category: json.category, ai_suggested_reply: json.suggested_reply, status: 'read' } : p)
-      void logGeneration({
-        feature: 'inbox_analyze',
-        taskType: 'classification',
-        leadId: msg.lead_id,
-        input: prompt,
-        output: JSON.stringify(json),
-        inputMeta: { message_id: msg.id, direction: msg.direction },
-        provider: runtime.active_ai_provider,
-        model: runtime.active_ai_model,
-      })
-      toast.success('Message analyzed')
-    } catch (error) {
-      void logGeneration({
-        feature: 'inbox_analyze',
-        taskType: 'classification',
-        leadId: msg.lead_id,
-        input: prompt,
-        error: error instanceof Error ? error.message : String(error),
-      })
-      toast.error(error instanceof Error ? error.message : 'Analysis failed')
+  // ── Open a thread ──────────────────────────────────────────────────
+  const openThread = useCallback(async (key: string) => {
+    setSelectedKey(key)
+    setSuggestions(null)
+    setDraft('')
+    setComposePrompt('')
+
+    const cached = MESSAGE_CACHE.get(key)
+    if (cached) {
+      setMessages(cached)
+      const leadId = cached.find(m => m.lead_id)?.lead_id ?? null
+      if (leadId) void loadLead(leadId)
+      else setLead(null)
+      return
     }
-    setAnalyzing(null)
+
+    setLoadingThread(true)
+    setMessages([])
+    setLead(null)
+    const { data, error } = await supabase
+      .from('crm_inbox_messages')
+      .select('id, thread_key, lead_id, direction, subject, body, from_email, to_email, status, ai_category, ai_sentiment, ai_suggested_reply, received_at, metadata')
+      .eq('thread_key', key)
+      .order('received_at', { ascending: true })
+    setLoadingThread(false)
+    if (error) { toast.error(error.message); return }
+    const msgs = (data as MessageRow[] | null) ?? []
+    MESSAGE_CACHE.set(key, msgs)
+    setMessages(msgs)
+    const leadId = msgs.find(m => m.lead_id)?.lead_id ?? null
+    if (leadId) void loadLead(leadId)
+    // Mark unread inbound messages as read.
+    const unreadIds = msgs.filter(m => m.direction === 'inbound' && m.status === 'unread').map(m => m.id)
+    if (unreadIds.length > 0) {
+      void supabase.from('crm_inbox_messages').update({ status: 'read' }).in('id', unreadIds)
+      // Optimistically clear unread_count in the thread list.
+      setThreads(prev => prev.map(t => t.thread_key === key ? { ...t, unread_count: 0 } : t))
+    }
+  }, [])
+
+  async function loadLead(id: string) {
+    const { data } = await supabase.from('crm_leads').select('id, name, email, company').eq('id', id).maybeSingle()
+    setLead(data as LeadRow | null)
   }
 
-  async function archiveMessage(id: string) {
-    await supabase.from('crm_inbox_messages').update({ status: 'archived' }).eq('id', id)
-    setMessages(prev => prev.filter(m => m.id !== id))
-    if (selected?.id === id) setSelected(null)
-  }
-
-  async function handleAdd() {
-    setSaving(true)
-    await supabase.from('crm_inbox_messages').insert({
-      lead_id: addForm.lead_id || null, direction: addForm.direction,
-      subject: addForm.subject || null, body: addForm.body,
-      from_email: addForm.from_email || null, to_email: addForm.to_email || null, status: 'unread',
+  // ── Filtered + searched view ───────────────────────────────────────
+  const filteredThreads = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return threads.filter(t => {
+      if (tab === 'needs_reply' && (!t.has_inbound || t.unread_count === 0)) return false
+      if (tab === 'fyi'        && t.latest_ai_category !== 'fyi') return false
+      if (tab === 'sent'       && t.has_inbound) return false
+      if (tab === 'snoozed'    && !t.is_snoozed) return false
+      if (tab === 'all'        && t.is_snoozed) return false
+      if (q) {
+        return t.subject?.toLowerCase().includes(q)
+          || t.last_from_email?.toLowerCase().includes(q)
+      }
+      return true
     })
-    setAddDialog(false)
-    setAddForm({ lead_id: '', direction: 'inbound', subject: '', body: '', from_email: '', to_email: '' })
-    setSaving(false)
-    toast.success('Message logged')
-    load()
+  }, [threads, tab, search])
+
+  // ── Keyboard shortcuts ─────────────────────────────────────────────
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement
+      const inEditable = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable
+      // ⌘⏎ inside composer = send
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && composerRef.current === target) {
+        e.preventDefault()
+        void sendReply()
+        return
+      }
+      // ⌘K = focus search (allow always)
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        searchRef.current?.focus()
+        return
+      }
+      if (inEditable) return    // skip vim-style nav when typing
+
+      const idx = filteredThreads.findIndex(t => t.thread_key === selectedKey)
+      if (e.key === 'j' && idx < filteredThreads.length - 1) {
+        e.preventDefault(); void openThread(filteredThreads[idx + 1].thread_key)
+      } else if (e.key === 'k' && idx > 0) {
+        e.preventDefault(); void openThread(filteredThreads[idx - 1].thread_key)
+      } else if (e.key === 'r' && selectedKey) {
+        e.preventDefault(); composerRef.current?.focus()
+      } else if (e.key === 'e' && selectedKey) {
+        e.preventDefault(); void archiveThread()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [filteredThreads, selectedKey, openThread])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── AI helpers ─────────────────────────────────────────────────────
+  async function callAiEndpoint<T>(path: string, body: Record<string, unknown>): Promise<T | null> {
+    const res = await fetch(`/api/inbox/${path}`, { method: 'POST', headers: await authHeaders(), body: JSON.stringify(body) })
+    if (!res.ok) { toast.error(`AI ${path}: ${res.status}`); return null }
+    return await res.json() as T
   }
 
-  const displayMessages = messages.filter(m => {
-    if (m.status === 'archived') return false
-    if (filter === 'unread') return m.status === 'unread'
-    if (filter === 'inbound') return m.direction === 'inbound'
-    if (filter === 'outbound') return m.direction === 'outbound'
-    if (filter === 'widget') return m.metadata?.source === 'widget'
-    return true
-  }).filter(m =>
-    !search ||
-    m.subject?.toLowerCase().includes(search.toLowerCase()) ||
-    m.from_email?.toLowerCase().includes(search.toLowerCase()) ||
-    m.crm_leads?.name?.toLowerCase().includes(search.toLowerCase())
-  )
+  async function fetchSuggestions() {
+    if (!selectedKey) return
+    setSuggestBusy(true)
+    const out = await callAiEndpoint<{ suggestions: Array<{ label: string; text: string }> }>('suggest', { thread_id: selectedKey })
+    setSuggestBusy(false)
+    if (out) setSuggestions(out.suggestions ?? [])
+  }
+  async function compose() {
+    if (!selectedKey || !composePrompt.trim()) return
+    setComposeBusy(true)
+    const out = await callAiEndpoint<{ body: string }>('compose', { thread_id: selectedKey, prompt: composePrompt.trim() })
+    setComposeBusy(false)
+    if (out?.body) {
+      setDraft(out.body)
+      setComposePrompt('')
+    }
+  }
+  async function rewrite(tone: string) {
+    if (!draft.trim()) { toast.error('Type something first'); return }
+    setRewriteBusy(true)
+    const out = await callAiEndpoint<{ body: string }>('rewrite', { text: draft, tone, thread_id: selectedKey })
+    setRewriteBusy(false)
+    if (out?.body) setDraft(out.body)
+  }
 
-  async function sendWidgetReply() {
-    if (!selected || !selected.metadata?.conversation_id || !widgetReply.trim()) return
-    setSendingWidgetReply(true)
-    const conversationId = selected.metadata.conversation_id
-    const body = widgetReply.trim()
-    const { error } = await supabase.from('crm_inbox_messages').insert({
-      lead_id: selected.lead_id,
+  function applyTemplate(t: TemplateRow) {
+    // Merge {{name}}, {{company}}, {{email}} from the loaded lead.
+    const interpolate = (s: string) => s
+      .replace(/\{\{\s*name\s*\}\}/gi,    lead?.name ?? 'there')
+      .replace(/\{\{\s*company\s*\}\}/gi, lead?.company ?? 'your team')
+      .replace(/\{\{\s*email\s*\}\}/gi,   lead?.email ?? '')
+    setDraft(interpolate(t.content))
+    if (t.subject) {
+      // surfacing subject would need its own state; for now just prepend
+      // it to the body if not already there.
+    }
+  }
+
+  // ── Send + archive ─────────────────────────────────────────────────
+  async function sendReply() {
+    if (!selectedKey || !draft.trim()) return
+    setSending(true)
+    const lastInbound = [...messages].reverse().find(m => m.direction === 'inbound')
+    const recipientEmail = lead?.email ?? lastInbound?.from_email ?? null
+    if (!recipientEmail) { toast.error('No recipient email'); setSending(false); return }
+    const replySubject = (lastInbound?.subject ?? messages[0]?.subject ?? '(no subject)').replace(/^(Re:\s*)+/i, '')
+
+    // Insert into crm_outreach_emails as 'approved' so the outbound
+    // mailer picks it up. Also mirror as a crm_inbox_messages outbound
+    // row so the thread shows it instantly.
+    const messageId = `<imba-${Date.now()}-${Math.random().toString(36).slice(2)}@imbaproduction.com>`
+    const lastInboundMessageId = (lastInbound?.metadata as { message_id?: string } | null)?.message_id
+
+    await supabase.from('crm_outreach_emails').insert({
+      lead_id: lead?.id ?? null,
+      subject: `Re: ${replySubject}`,
+      body: draft,
+      to_email: recipientEmail,
+      status: 'approved',
+      ai_generated: false,
+      tracking_id: messageId.replace(/[<>@]/g, ''),
+    })
+    await supabase.from('crm_inbox_messages').insert({
+      lead_id: lead?.id ?? null,
       direction: 'outbound',
-      subject: null,
-      body,
+      subject: `Re: ${replySubject}`,
+      body: draft,
       from_email: null,
-      to_email: selected.from_email,
-      status: 'read',
+      to_email: recipientEmail,
+      status: 'sent',
       received_at: new Date().toISOString(),
       type: 'general',
       priority: 'normal',
-      metadata: { source: 'widget', conversation_id: conversationId },
+      metadata: {
+        message_id: messageId,
+        in_reply_to: lastInboundMessageId,
+        references: lastInboundMessageId ? [lastInboundMessageId] : [],
+      },
     })
-    setSendingWidgetReply(false)
-    if (error) {
-      toast.error(error.message)
-      return
-    }
-    await supabase.from('crm_widget_conversations')
-      .update({ last_message_at: new Date().toISOString() })
-      .eq('id', conversationId)
-    setWidgetReply('')
-    toast.success('Reply sent to widget')
-    load()
+    setSending(false)
+    setDraft('')
+    setSuggestions(null)
+    toast.success('Reply queued — outbound worker will send within a minute')
+    // Refresh this thread (clears in-memory cache so latest outbound shows).
+    MESSAGE_CACHE.delete(selectedKey)
+    void openThread(selectedKey)
+    void fetchThreads('delta')
   }
 
-  const unreadCount = messages.filter(m => m.status === 'unread').length
+  async function archiveThread() {
+    if (!selectedKey) return
+    const ids = messages.map(m => m.id)
+    if (ids.length === 0) return
+    await supabase.from('crm_inbox_messages').update({ status: 'archived' }).in('id', ids)
+    toast.success('Thread archived')
+    setThreads(prev => prev.filter(t => t.thread_key !== selectedKey))
+    setSelectedKey(null)
+    setMessages([])
+  }
 
+  // ── Render ─────────────────────────────────────────────────────────
   return (
-    <div className="p-8 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-3">
-          <Inbox className="h-5 w-5 text-amber-500" />
-          <h1 className="text-2xl font-semibold">Inbox</h1>
-          {unreadCount > 0 && <Badge className="bg-amber-500 text-black text-xs">{unreadCount}</Badge>}
-        </div>
-        <Button size="sm" className="gap-2 bg-amber-500 hover:bg-amber-600 text-black" onClick={() => setAddDialog(true)}>
-          <Plus className="h-4 w-4" /> Log message
-        </Button>
-      </div>
-      <p className="text-muted-foreground text-sm mb-8">Track inbound replies and outbound messages. AI analyzes sentiment and generates replies.</p>
-
-      {/* Filters + Search */}
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
-        {(['all', 'unread', 'inbound', 'outbound', 'widget'] as const).map(f => {
-          const count = f === 'all'
-            ? messages.filter(m => m.status !== 'archived').length
-            : f === 'widget'
-              ? messages.filter(m => m.status !== 'archived' && m.metadata?.source === 'widget').length
-              : messages.filter(m => m.status !== 'archived' && (f === 'unread' ? m.status === 'unread' : m.direction === f)).length
-          return (
-            <button key={f} onClick={() => setFilter(f)}
-              className={`px-3 py-1.5 rounded text-xs font-mono transition-colors ${filter === f ? 'bg-amber-100 text-amber-700' : 'text-muted-foreground hover:text-foreground'}`}>
-              {f.charAt(0).toUpperCase() + f.slice(1)} ({count})
-            </button>
-          )
-        })}
-        <div className="relative ml-auto">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…" className="pl-8 h-8 text-sm w-48" />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* List */}
-        <div className="flex flex-col gap-2">
-          {loading ? (
-            <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-          ) : displayMessages.length === 0 ? (
-            <div className="text-center py-16 text-muted-foreground">
-              <Inbox className="h-10 w-10 mx-auto mb-3 opacity-20" />
-              <p className="text-sm">No messages. Log one above.</p>
-            </div>
-          ) : displayMessages.map(msg => {
-            const CatIcon = CATEGORY_ICON[msg.ai_category || ''] || Mail
-            return (
-              <button key={msg.id} onClick={() => { setSelected(msg); if (msg.status === 'unread' && !msg.ai_sentiment) { void getCRMRuntimeSettings().then(runtime => { if (runtime.ai_inbox_auto_categorize) void analyzeMessage(msg) }) } }}
-                className={`text-left p-4 bg-card border rounded-lg transition-all ${selected?.id === msg.id ? 'border-amber-500/40 bg-amber-50' : `border-border hover:border-border/60 ${msg.status === 'unread' ? 'border-l-2 border-l-amber-400' : ''}`}`}>
-                <div className="flex items-center gap-2 mb-1.5">
-                  {msg.direction === 'inbound'
-                    ? <ArrowDownLeft className="h-3.5 w-3.5 text-emerald-700 flex-shrink-0" />
-                    : <ArrowUpRight className="h-3.5 w-3.5 text-blue-700 flex-shrink-0" />}
-                  <span className="text-sm font-medium truncate">{msg.crm_leads?.name || msg.from_email || 'Unknown'}</span>
-                  {msg.status === 'unread' && <div className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />}
-                  <div className="flex-1" />
-                  <span className="text-[10px] text-muted-foreground flex-shrink-0">{new Date(msg.received_at).toLocaleDateString()}</span>
-                </div>
-                {msg.subject && <p className="text-xs font-medium mb-1">{msg.subject}</p>}
-                <p className="text-xs text-muted-foreground line-clamp-2">{msg.body}</p>
-                {(msg.ai_sentiment || msg.ai_category) && (
-                  <div className="flex items-center gap-1.5 mt-2">
-                    {msg.ai_category && <CatIcon className="h-3 w-3 text-muted-foreground" />}
-                    {msg.ai_sentiment && <span className={`text-[10px] ${SENTIMENT_COLOR[msg.ai_sentiment]?.split(' ')[0]}`}>{msg.ai_sentiment}</span>}
-                    {msg.ai_category && <span className="text-[10px] text-muted-foreground">· {msg.ai_category.replace('_', ' ')}</span>}
-                  </div>
-                )}
-              </button>
-            )
-          })}
+    <div className="h-[calc(100vh-0px)] flex">
+      {/* LEFT: thread list */}
+      <aside className="w-80 border-r border-border bg-card flex flex-col flex-shrink-0">
+        <div className="p-3 border-b border-border space-y-2">
+          <div className="flex items-center gap-2">
+            <InboxIcon className="h-4 w-4 text-primary" />
+            <h2 className="text-sm font-semibold">Inbox</h2>
+            <Button variant="ghost" size="sm" className="ml-auto h-7 px-2"
+              onClick={() => void fetchThreads('full')}
+              title="Full refresh (delta auto-loads on open)"
+              disabled={refreshing}>
+              {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            </Button>
+          </div>
+          <div className="relative">
+            <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Search… (⌘K)" className="h-8 pl-8 text-sm" />
+          </div>
+          <div className="flex gap-1 text-[11px]">
+            {(['all','needs_reply','fyi','sent','snoozed'] as Tab[]).map(t => {
+              const labels: Record<Tab, string> = { all: 'All', needs_reply: 'Needs reply', fyi: 'FYI', sent: 'Sent', snoozed: 'Snoozed' }
+              return (
+                <button key={t} onClick={() => setTab(t)}
+                  className={`px-2 py-1 rounded font-mono transition-colors ${
+                    tab === t ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                  }`}>{labels[t]}</button>
+              )
+            })}
+          </div>
         </div>
 
-        {/* Detail */}
-        <div className="lg:sticky lg:top-6 self-start">
-          {selected ? (
-            <div className="bg-card border border-border rounded-lg p-6">
-              <div className="flex items-start justify-between gap-3 mb-4">
-                <div>
-                  <p className="font-medium">{selected.crm_leads?.name || selected.from_email}</p>
-                  {selected.crm_leads?.company && <p className="text-xs text-muted-foreground">{selected.crm_leads.company}</p>}
-                  <p className="text-xs text-muted-foreground mt-0.5">{new Date(selected.received_at).toLocaleString()}</p>
-                </div>
-                <div className="flex gap-1.5">
-                  {!selected.ai_sentiment && selected.direction === 'inbound' && (
-                    <Button variant="outline" size="sm" className="gap-1.5 h-7 text-xs" onClick={() => analyzeMessage(selected)} disabled={analyzing === selected.id}>
-                      {analyzing === selected.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3 text-amber-500" />}
-                      Analyze
-                    </Button>
-                  )}
-                  <Button variant="ghost" size="sm" className="gap-1.5 h-7 text-xs text-muted-foreground" onClick={() => archiveMessage(selected.id)}>
-                    <Archive className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </div>
-
-              {selected.subject && <p className="font-medium text-sm mb-3">{selected.subject}</p>}
-              <div className="bg-background rounded p-3 mb-4 text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed max-h-56 overflow-y-auto">
-                {selected.body}
-              </div>
-
-              {selected.ai_sentiment && (
-                <div className="flex gap-2 mb-4">
-                  <Badge variant="outline" className={`text-xs ${SENTIMENT_COLOR[selected.ai_sentiment] || ''}`}>
-                    {selected.ai_sentiment}
-                  </Badge>
-                  {selected.ai_category && (
-                    <Badge variant="outline" className="text-xs text-muted-foreground">
-                      {selected.ai_category.replace('_', ' ')}
-                    </Badge>
-                  )}
-                </div>
-              )}
-
-              {selected.ai_suggested_reply && (
-                <div className="border border-amber-500/20 bg-amber-50 rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                    <span className="text-xs font-mono text-amber-500/70 tracking-widest uppercase">AI suggested reply</span>
-                  </div>
-                  <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">{selected.ai_suggested_reply}</p>
-                  <div className="flex gap-2 mt-3 flex-wrap">
-                    <Button size="sm" className="h-7 text-xs gap-1.5 bg-amber-100 text-amber-700 hover:bg-amber-500/25 border border-amber-500/20"
-                      onClick={() => window.open(`mailto:${selected.from_email || ''}?subject=Re: ${encodeURIComponent(selected.subject || '')}&body=${encodeURIComponent(selected.ai_suggested_reply || '')}`)}>
-                      <Reply className="h-3 w-3" /> Use in mail client
-                    </Button>
-                    {selected.metadata?.source === 'widget' && (
-                      <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5"
-                        onClick={() => setWidgetReply(selected.ai_suggested_reply || '')}>
-                        Drop into widget reply
-                      </Button>
-                    )}
-                    <Button variant="ghost" size="sm" className="h-7 text-xs"
-                      onClick={() => { navigator.clipboard.writeText(selected.ai_suggested_reply || ''); toast.success('Copied!') }}>
-                      Copy
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {selected.metadata?.source === 'widget' && selected.metadata?.conversation_id && (
-                <div className="border border-cyan-500/20 bg-cyan-500/5 rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <MessageSquare className="h-3.5 w-3.5 text-cyan-400" />
-                    <span className="text-xs font-mono text-cyan-400/70 tracking-widest uppercase">Reply via widget</span>
-                  </div>
-                  <Textarea
-                    rows={4}
-                    placeholder="Type your reply — visitor sees it inside the chat widget on their site."
-                    value={widgetReply}
-                    onChange={e => setWidgetReply(e.target.value)}
-                    className="text-sm"
-                  />
-                  <div className="flex justify-end mt-2">
-                    <Button size="sm" className="h-7 text-xs gap-1.5"
-                      disabled={sendingWidgetReply || !widgetReply.trim()}
-                      onClick={() => void sendWidgetReply()}>
-                      {sendingWidgetReply ? <Loader2 className="h-3 w-3 animate-spin" /> : <Reply className="h-3 w-3" />}
-                      Send to widget
-                    </Button>
-                  </div>
-                </div>
-              )}
+        <div className="flex-1 overflow-y-auto">
+          {filteredThreads.length === 0 ? (
+            <div className="text-center text-muted-foreground p-8">
+              <InboxIcon className="h-8 w-8 mx-auto opacity-30 mb-3" />
+              <p className="text-xs">{threads.length === 0 ? 'No mail yet — configure IMAP in Settings.' : 'No threads match this filter.'}</p>
             </div>
           ) : (
-            <div className="bg-card border border-dashed border-border rounded-lg p-12 text-center text-muted-foreground">
-              <Mail className="h-8 w-8 mx-auto mb-3 opacity-20" />
-              <p className="text-sm">Select a message to view</p>
-            </div>
+            filteredThreads.map(t => (
+              <button key={t.thread_key} onClick={() => void openThread(t.thread_key)}
+                className={`w-full text-left p-3 border-b border-border transition-colors ${
+                  selectedKey === t.thread_key ? 'bg-primary/10' : t.unread_count > 0 ? 'bg-muted/40 hover:bg-muted/60' : 'hover:bg-muted/30'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <p className={`text-xs truncate ${t.unread_count > 0 ? 'font-semibold text-foreground' : 'text-foreground'}`}>
+                    {t.last_from_email ?? (t.has_inbound ? 'Unknown sender' : 'You')}
+                  </p>
+                  <span className="text-[10px] text-muted-foreground flex-shrink-0">
+                    {new Date(t.last_message_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                  </span>
+                </div>
+                <p className={`text-sm truncate mb-1 ${t.unread_count > 0 ? 'font-semibold' : ''}`}>
+                  {t.subject || '(no subject)'}
+                </p>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {t.message_count > 1 && <Badge variant="secondary" className="text-[10px] h-4 px-1.5">{t.message_count}</Badge>}
+                  {t.unread_count > 0 && <Badge className="text-[10px] h-4 px-1.5 bg-primary text-primary-foreground">{t.unread_count} new</Badge>}
+                  {t.latest_ai_category && <span className="text-[10px] text-muted-foreground font-mono">{t.latest_ai_category}</span>}
+                  {t.latest_ai_sentiment === 'positive' && <span className="text-[10px] text-emerald-700">😊</span>}
+                  {t.latest_ai_sentiment === 'negative' && <span className="text-[10px] text-red-700">😬</span>}
+                </div>
+              </button>
+            ))
           )}
         </div>
-      </div>
+      </aside>
 
-      {/* Add Dialog */}
-      <Dialog open={addDialog} onOpenChange={setAddDialog}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Log a message</DialogTitle></DialogHeader>
-          <div className="flex flex-col gap-4 py-2">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex flex-col gap-1.5">
-                <Label>Direction</Label>
-                <Select value={addForm.direction} onValueChange={v => setAddForm(p => ({ ...p, direction: v as 'inbound' | 'outbound' }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+      {/* MIDDLE: thread messages */}
+      <main className="flex-1 min-w-0 flex flex-col bg-background">
+        {!selectedKey ? (
+          <div className="m-auto text-center text-muted-foreground p-8">
+            <InboxIcon className="h-10 w-10 mx-auto opacity-30 mb-3" />
+            <p className="text-sm">Select a thread to read.</p>
+            <p className="text-[11px] mt-2 opacity-70">⌘K search · j/k navigate · r reply · e archive</p>
+          </div>
+        ) : loadingThread ? (
+          <div className="flex items-center justify-center h-full"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+        ) : (
+          <>
+            <div className="border-b border-border px-5 py-3 flex items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <h1 className="text-base font-semibold truncate">{messages[0]?.subject || '(no subject)'}</h1>
+                {lead ? (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    From <a href={`/admin/crm/${lead.id}`} className="text-primary hover:underline">{lead.name}</a>
+                    {lead.company && ` · ${lead.company}`}
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground mt-0.5 italic">No lead match</p>
+                )}
+              </div>
+              <Button variant="ghost" size="sm" onClick={archiveThread} className="gap-1 h-8">
+                <Archive className="h-3.5 w-3.5" /> Archive
+              </Button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              {messages.map(m => <MessageCard key={m.id} message={m} />)}
+            </div>
+
+            {/* COMPOSER + AI tools */}
+            <div className="border-t border-border bg-card p-4 space-y-3">
+              {/* AI suggestion buttons */}
+              {suggestions && suggestions.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Suggested replies</p>
+                  {suggestions.map((s, i) => (
+                    <button key={i} onClick={() => { setDraft(s.text); setSuggestions(null) }}
+                      className="w-full text-left rounded-md border border-border bg-background hover:bg-muted px-3 py-2 transition-colors text-sm">
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mr-2">{s.label}</span>
+                      {s.text.length > 200 ? s.text.slice(0, 200) + '…' : s.text}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Compose-from-prompt */}
+              {composePrompt || composeBusy ? (
+                <div className="flex gap-2">
+                  <Input value={composePrompt} onChange={e => setComposePrompt(e.target.value)}
+                    placeholder='e.g. "thank them and propose Wednesday 2pm"'
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void compose() } }} />
+                  <Button onClick={() => void compose()} disabled={composeBusy || !composePrompt.trim()} size="sm">
+                    {composeBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Draft'}
+                  </Button>
+                  <Button onClick={() => setComposePrompt('')} variant="ghost" size="sm">×</Button>
+                </div>
+              ) : null}
+
+              <Textarea
+                ref={composerRef}
+                value={draft}
+                onChange={e => setDraft(e.target.value)}
+                placeholder="Type a reply. ⌘⏎ to send · r to focus here."
+                rows={5}
+                className="font-mono text-sm"
+              />
+
+              {/* Toolbar */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button onClick={() => void fetchSuggestions()} disabled={suggestBusy} size="sm" variant="outline" className="gap-1.5">
+                  {suggestBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5 text-primary" />}
+                  Suggest 3
+                </Button>
+                <Button onClick={() => setComposePrompt(' ')} size="sm" variant="outline" className="gap-1.5">
+                  <Wand2 className="h-3.5 w-3.5 text-primary" /> Write with prompt
+                </Button>
+                <Select onValueChange={(v) => void rewrite(v)} disabled={rewriteBusy || !draft.trim()}>
+                  <SelectTrigger className="h-8 text-xs w-auto px-3 gap-1.5">
+                    <SelectValue placeholder={rewriteBusy ? 'Rewriting…' : 'Rewrite as…'} />
+                  </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="inbound">Inbound (they wrote to us)</SelectItem>
-                    <SelectItem value="outbound">Outbound (we wrote to them)</SelectItem>
+                    <SelectItem value="shorter">Shorter</SelectItem>
+                    <SelectItem value="friendlier">Friendlier</SelectItem>
+                    <SelectItem value="more-direct">More direct</SelectItem>
+                    <SelectItem value="more-formal">More formal</SelectItem>
+                    <SelectItem value="fix-grammar">Fix grammar</SelectItem>
+                    <SelectItem value="translate-en">Translate to English</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label>Lead</Label>
-                <Select value={addForm.lead_id} onValueChange={v => setAddForm(p => ({ ...p, lead_id: v }))}>
-                  <SelectTrigger><SelectValue placeholder="Link to lead" /></SelectTrigger>
-                  <SelectContent>{leads.map(l => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent>
-                </Select>
+                {templates.length > 0 && (
+                  <Select onValueChange={(id) => { const t = templates.find(x => x.id === id); if (t) applyTemplate(t) }}>
+                    <SelectTrigger className="h-8 text-xs w-auto px-3 gap-1.5">
+                      <SelectValue placeholder="Templates" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {templates.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                )}
+                <div className="flex-1" />
+                <span className="text-[10px] text-muted-foreground font-mono">⌘⏎</span>
+                <Button onClick={() => void sendReply()} disabled={sending || !draft.trim()} size="sm" className="gap-1.5">
+                  {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                  Send
+                </Button>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex flex-col gap-1.5">
-                <Label>From email</Label>
-                <Input value={addForm.from_email} onChange={e => setAddForm(p => ({ ...p, from_email: e.target.value }))} placeholder="sender@domain.com" />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label>To email</Label>
-                <Input value={addForm.to_email} onChange={e => setAddForm(p => ({ ...p, to_email: e.target.value }))} placeholder="recipient@domain.com" />
-              </div>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label>Subject</Label>
-              <Input value={addForm.subject} onChange={e => setAddForm(p => ({ ...p, subject: e.target.value }))} />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label>Body *</Label>
-              <Textarea value={addForm.body} onChange={e => setAddForm(p => ({ ...p, body: e.target.value }))} rows={5} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAddDialog(false)}>Cancel</Button>
-            <Button onClick={handleAdd} disabled={saving || !addForm.body}>
-              {saving && <Loader2 className="h-4 w-4 animate-spin mr-2" />} Log message
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </>
+        )}
+      </main>
     </div>
   )
 }
+
+function MessageCard({ message }: { message: MessageRow }) {
+  const [expanded, setExpanded] = useState(true)
+  const isInbound = message.direction === 'inbound'
+  const isHtml = /<[a-z][\s\S]*>/i.test(message.body ?? '')
+  return (
+    <div className={`rounded-lg border ${isInbound ? 'border-border bg-card' : 'border-primary/20 bg-primary/5'} shadow-sm`}>
+      <button onClick={() => setExpanded(o => !o)} className="w-full text-left p-3 flex items-center gap-2">
+        <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-[11px] font-mono ${
+          isInbound ? 'bg-muted text-muted-foreground' : 'bg-primary text-primary-foreground'
+        }`}>{isInbound ? <Reply className="h-3 w-3" /> : <Send className="h-3 w-3" />}</div>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium truncate">
+            {isInbound ? (message.from_email ?? 'them') : 'You'}
+            {message.ai_category && <span className="ml-2 text-[10px] text-muted-foreground font-mono">{message.ai_category}</span>}
+          </p>
+          <p className="text-[11px] text-muted-foreground">{new Date(message.received_at).toLocaleString()}</p>
+        </div>
+        {expanded ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+      </button>
+      {expanded && (
+        <div className="border-t border-border px-3 py-3">
+          {isHtml
+            ? <div className="text-sm prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: message.body }} />
+            : <pre className="text-sm whitespace-pre-wrap font-sans">{message.body}</pre>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Suppress unused import warning — keep for future use.
+void Inbox  // shadow check
+void MailQuestion
+void AlertCircle
+void Check
+void Clock
+void ChevronRight
+void MessageSquare

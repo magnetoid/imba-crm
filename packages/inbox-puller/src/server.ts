@@ -27,6 +27,7 @@ import { mountRecordingWebhook } from './webhooks/recording.js'
 import { mountAiProxy } from './ai-proxy.js'
 import { mountNomoApi } from './nomo.js'
 import { mountNomoBrief } from './nomo-brief.js'
+import { mountInboxAi } from './inbox-ai.js'
 
 const PORT = parseInt(process.env.WORKER_HTTP_PORT || '3030', 10)
 const JWT_SECRET = process.env.JWT_SECRET || ''
@@ -123,6 +124,9 @@ export function startHttpServer() {
 
   // /api/nomo/brief — Phase 9 daily-brief composer for the Pipeline card.
   mountNomoBrief(app)
+
+  // /api/inbox/{suggest,compose,rewrite} — Phase 12.3 AI compose endpoints.
+  mountInboxAi(app)
 
   // ── Open-pixel ────────────────────────────────────────────────────────
   app.get('/track/pixel/:idgif', async c => {
