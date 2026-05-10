@@ -4,7 +4,7 @@
 // there's exactly one chat UI to style/maintain.
 
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Loader2, Send, StopCircle, AlertCircle, Wrench, ChevronRight } from 'lucide-react'
+import { Loader2, Send, StopCircle, AlertCircle, Wrench, ChevronRight, Check, X } from 'lucide-react'
 import { Button } from '@imba/shared/ui/button'
 import { Textarea } from '@imba/shared/ui/textarea'
 import type { NomoMessage, NomoToolCall } from './useNomo'
@@ -15,13 +15,15 @@ interface Props {
   error: string | null
   onSend: (text: string) => void
   onCancel: () => void
+  /** Approve/reject a pending write tool. Wired through useNomo.decide. */
+  onDecide?: (messageId: string, toolUseId: string, decision: 'approve' | 'reject') => void
   /** Compact mode renders smaller padding for use in the side panel. */
   compact?: boolean
   /** Optional context line shown above the composer (e.g. "Pinned to: Acme Inc"). */
   pinnedLabel?: string
 }
 
-export function NomoChat({ messages, streaming, error, onSend, onCancel, compact, pinnedLabel }: Props) {
+export function NomoChat({ messages, streaming, error, onSend, onCancel, onDecide, compact, pinnedLabel }: Props) {
   const [draft, setDraft] = useState('')
   const listRef = useRef<HTMLDivElement | null>(null)
 
@@ -55,7 +57,7 @@ export function NomoChat({ messages, streaming, error, onSend, onCancel, compact
         )}
 
         {messages.map((m, i) => (
-          <Bubble key={m.id ?? i} message={m} />
+          <Bubble key={m.id ?? i} message={m} onDecide={onDecide} />
         ))}
 
         {streaming && messages[messages.length - 1]?.status !== 'streaming' && (
@@ -109,7 +111,7 @@ export function NomoChat({ messages, streaming, error, onSend, onCancel, compact
   )
 }
 
-function Bubble({ message }: { message: NomoMessage }) {
+function Bubble({ message, onDecide }: { message: NomoMessage; onDecide?: Props['onDecide'] }) {
   const isUser = message.role === 'user'
   const isFailed = message.status === 'failed'
   const hasTools = !isUser && message.tool_calls && message.tool_calls.length > 0
@@ -118,7 +120,14 @@ function Bubble({ message }: { message: NomoMessage }) {
       <div className={`max-w-[85%] flex flex-col gap-2 ${isUser ? 'items-end' : 'items-start'}`}>
         {hasTools && (
           <div className="flex flex-col gap-1.5 w-full">
-            {message.tool_calls!.map(tc => <ToolCard key={tc.id} call={tc} />)}
+            {message.tool_calls!.map(tc => (
+              <ToolCard
+                key={tc.id}
+                call={tc}
+                messageId={message.id}
+                onDecide={onDecide}
+              />
+            ))}
           </div>
         )}
         {(message.content || message.status === 'streaming') && (
@@ -143,25 +152,46 @@ function Bubble({ message }: { message: NomoMessage }) {
   )
 }
 
-function ToolCard({ call }: { call: NomoToolCall }) {
-  const [open, setOpen] = useState(false)
-  const status = call.is_error ? 'error' : call.pending ? 'running' : 'done'
-  const ringColor = status === 'error' ? 'border-red-200 bg-red-50' :
-                    status === 'running' ? 'border-amber-200 bg-amber-50' :
-                                            'border-border bg-card'
+function ToolCard({ call, messageId, onDecide }: {
+  call: NomoToolCall
+  messageId?: string
+  onDecide?: Props['onDecide']
+}) {
+  const [open, setOpen] = useState(call.requires_approval ?? false)
+  const isPending  = call.pending
+  const isApproval = call.requires_approval && !call.result
+  const isError    = !!call.is_error
+  const isApproved = call.status === 'approved'
+  const isRejected = call.status === 'rejected'
+
+  const statusColor =
+      isError    ? 'border-red-200 bg-red-50' :
+      isApproval ? 'border-amber-300 bg-amber-50' :
+      isPending  ? 'border-amber-200 bg-amber-50' :
+      isApproved ? 'border-emerald-200 bg-emerald-50' :
+      isRejected ? 'border-slate-200 bg-slate-50' :
+                   'border-border bg-card'
+
   return (
-    <div className={`border rounded-md text-xs ${ringColor}`}>
+    <div className={`border rounded-md text-xs ${statusColor}`}>
       <button
         onClick={() => setOpen(o => !o)}
         className="w-full flex items-center gap-2 px-3 py-1.5 text-left"
       >
-        {call.pending
-          ? <Loader2 className="h-3 w-3 animate-spin text-amber-700 flex-shrink-0" />
-          : <Wrench className={`h-3 w-3 flex-shrink-0 ${call.is_error ? 'text-red-700' : 'text-emerald-700'}`} />}
-        <span className="font-mono font-medium flex-1 truncate">{call.name}</span>
+        {isPending  ? <Loader2 className="h-3 w-3 animate-spin text-amber-700 flex-shrink-0" /> :
+         isApproval ? <Wrench className="h-3 w-3 text-amber-700 flex-shrink-0" /> :
+         isError    ? <Wrench className="h-3 w-3 text-red-700 flex-shrink-0" /> :
+                      <Wrench className="h-3 w-3 text-emerald-700 flex-shrink-0" />}
+        <span className="font-mono font-medium flex-1 truncate">
+          {call.name}
+          {isApproval && <span className="ml-1.5 text-amber-700">· awaiting approval</span>}
+          {isApproved && <span className="ml-1.5 text-emerald-700">· approved</span>}
+          {isRejected && <span className="ml-1.5 text-slate-700">· rejected</span>}
+        </span>
         <span className="text-[10px] opacity-70">{summariseInput(call.input)}</span>
         <ChevronRight className={`h-3 w-3 transition-transform ${open ? 'rotate-90' : ''}`} />
       </button>
+
       {open && (
         <div className="border-t border-border px-3 py-2 space-y-2 font-mono">
           <div>
@@ -170,10 +200,31 @@ function ToolCard({ call }: { call: NomoToolCall }) {
           </div>
           {call.result && (
             <div>
-              <p className="text-[10px] uppercase tracking-wider opacity-60 mb-1">{call.is_error ? 'Error' : 'Result'}</p>
-              <pre className={`text-[11px] rounded p-1.5 overflow-x-auto ${call.is_error ? 'bg-red-50 text-red-900' : 'bg-background border border-border'}`}>{prettyResult(call.result)}</pre>
+              <p className="text-[10px] uppercase tracking-wider opacity-60 mb-1">{isError ? 'Error' : 'Result'}</p>
+              <pre className={`text-[11px] rounded p-1.5 overflow-x-auto ${isError ? 'bg-red-50 text-red-900' : 'bg-background border border-border'}`}>{prettyResult(call.result)}</pre>
             </div>
           )}
+        </div>
+      )}
+
+      {isApproval && onDecide && messageId && (
+        <div className="border-t border-amber-200 px-3 py-2 flex items-center gap-2 bg-amber-100/50">
+          <Button
+            size="sm"
+            className="h-7 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+            onClick={() => onDecide(messageId, call.id, 'approve')}
+          >
+            <Check className="h-3.5 w-3.5" /> Approve
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs gap-1.5 border-red-300 text-red-700 hover:bg-red-50"
+            onClick={() => onDecide(messageId, call.id, 'reject')}
+          >
+            <X className="h-3.5 w-3.5" /> Reject
+          </Button>
+          <span className="text-[11px] text-amber-900 ml-auto">Nomo wants to run a write action.</span>
         </div>
       )}
     </div>

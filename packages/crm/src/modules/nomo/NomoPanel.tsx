@@ -72,6 +72,7 @@ export default function NomoPanel({ open, onClose, leadId, leadLabel }: Props) {
             error={nomo.error}
             onSend={send}
             onCancel={nomo.cancel}
+            onDecide={nomo.decide}
             compact
             pinnedLabel={leadLabel ? `Pinned to: ${leadLabel}` : undefined}
           />

@@ -100,6 +100,7 @@ export default function Nomo() {
           error={nomo.error}
           onSend={nomo.send}
           onCancel={nomo.cancel}
+          onDecide={nomo.decide}
         />
       </main>
     </div>

@@ -18,6 +18,12 @@ export interface NomoTool {
   /** Execute the tool. Return the JSON-serialisable result the model
    *  will see (and the operator will see rendered inline). */
   run: (input: Record<string, unknown>) => Promise<unknown>
+  /** True if this tool mutates the CRM. Write tools pause for human
+   *  approval in `approval` mode and require an entry in
+   *  `nomo_autopilot_tools` to run unattended in `autopilot` mode. */
+  write?: boolean
+  /** Optional: only admins may invoke. Enforced server-side. */
+  admin_only?: boolean
 }
 
 // ── search_leads ─────────────────────────────────────────────────────
@@ -251,14 +257,206 @@ const findRecentSignals: NomoTool = {
   },
 }
 
+// ── Write tools (8.3) ────────────────────────────────────────────────
+// Each one mutates the CRM. The chat endpoint pauses on these in
+// `approval` mode and only runs them after the operator clicks Approve.
+// In `autopilot` mode they need to be in nomo_autopilot_tools.
+
+const KNOWN_AGENTS = [
+  'lead-finder', 'lead-enricher', 'lead-scorer',
+  'outreach-drafter', 'inbox-replier', 'meeting-booker',
+  'deal-health-scorer', 'call-analyzer',
+] as const
+
+const enqueueAgent: NomoTool = {
+  name: 'enqueue_agent',
+  description:
+    'Queue an agent run. Use this to draft an outreach email (outreach-drafter), enrich a lead from public data (lead-enricher), recompute scores (lead-scorer), find leads via Apify (lead-finder), reply to inbound messages (inbox-replier), book a meeting (meeting-booker), score deal health (deal-health-scorer), or analyze a call recording (call-analyzer). The worker picks it up within ~15s.',
+  write: true,
+  input_schema: {
+    type: 'object',
+    properties: {
+      kind:    { type: 'string', enum: KNOWN_AGENTS as unknown as string[], description: 'Which agent to run.' },
+      lead_id: { type: 'string', description: 'crm_leads.id this agent operates on (most agents need this).' },
+      input:   { type: 'object', description: 'Agent-specific input. For outreach-drafter: { channel? }. For meeting-booker: { message_id? }. For lead-finder: { actor_id, actor_input, max_save? }.', additionalProperties: true },
+    },
+    required: ['kind'],
+  },
+  async run(input) {
+    const kind = String(input.kind)
+    if (!KNOWN_AGENTS.includes(kind as typeof KNOWN_AGENTS[number])) {
+      throw new Error(`unknown agent kind: ${kind}`)
+    }
+    const { data, error } = await supabase
+      .from('crm_agent_jobs')
+      .insert({
+        agent_kind: kind,
+        lead_id: input.lead_id ? String(input.lead_id) : null,
+        input: (input.input ?? {}) as Record<string, unknown>,
+        triggered_by: 'nomo',
+      })
+      .select('id, status, autonomy')
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return { ok: true, queued: data }
+  },
+}
+
+const moveLeadStage: NomoTool = {
+  name: 'move_lead_stage',
+  description:
+    'Move a lead to a different pipeline stage. Goes through the move_lead_stage RPC, which validates the exit checklist for the source stage. If items are missing the call returns ok=false with the missing keys — you should explain to the operator and offer to tick them via tick_exit_checklist.',
+  write: true,
+  input_schema: {
+    type: 'object',
+    properties: {
+      lead_id:  { type: 'string', description: 'crm_leads.id (uuid)' },
+      to_stage: { type: 'string', enum: ['new','qualified','proposal','negotiation','won','lost'] },
+    },
+    required: ['lead_id', 'to_stage'],
+  },
+  async run(input) {
+    const { data, error } = await supabase.rpc('move_lead_stage', {
+      p_lead_id: String(input.lead_id),
+      p_to_stage: String(input.to_stage),
+    })
+    if (error) throw new Error(error.message)
+    return data
+  },
+}
+
+const addActivity: NomoTool = {
+  name: 'add_activity',
+  description:
+    'Log a note / call / meeting / email summary on a lead. Use this when the operator says "log a call with X" or "add a note that they want to talk next week".',
+  write: true,
+  input_schema: {
+    type: 'object',
+    properties: {
+      lead_id: { type: 'string' },
+      type:    { type: 'string', enum: ['note','call','meeting','email','task'] },
+      subject: { type: 'string' },
+      body:    { type: 'string', description: '1-2 sentence summary.' },
+    },
+    required: ['lead_id', 'type', 'body'],
+  },
+  async run(input) {
+    const { data, error } = await supabase
+      .from('crm_activities')
+      .insert({
+        lead_id: String(input.lead_id),
+        type:    String(input.type),
+        subject: input.subject ? String(input.subject).slice(0, 200) : null,
+        body:    String(input.body).slice(0, 4000),
+        created_by: 'nomo',
+      })
+      .select('id, type, subject, created_at')
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    // Touch last_contacted_at for contact-type activities, like the SPA does.
+    if (['call','meeting','email'].includes(String(input.type))) {
+      await supabase.from('crm_leads')
+        .update({ last_contacted_at: new Date().toISOString() })
+        .eq('id', String(input.lead_id))
+    }
+    return { ok: true, activity: data }
+  },
+}
+
+const setFollowUp: NomoTool = {
+  name: 'set_follow_up',
+  description:
+    'Set or update the follow-up date for a lead. Pass null to clear it. The Pipeline pings the operator when it goes overdue.',
+  write: true,
+  input_schema: {
+    type: 'object',
+    properties: {
+      lead_id: { type: 'string' },
+      date:    { type: ['string', 'null'], description: 'ISO date or datetime; null to clear.' },
+    },
+    required: ['lead_id', 'date'],
+  },
+  async run(input) {
+    const date = input.date == null ? null : String(input.date)
+    const { error } = await supabase
+      .from('crm_leads')
+      .update({ next_follow_up: date })
+      .eq('id', String(input.lead_id))
+    if (error) throw new Error(error.message)
+    return { ok: true, lead_id: input.lead_id, next_follow_up: date }
+  },
+}
+
+const tickExitChecklist: NomoTool = {
+  name: 'tick_exit_checklist',
+  description:
+    'Mark a key on the lead\'s exit_checklist as true or false. Use this to satisfy a stage gate that move_lead_stage flagged as missing.',
+  write: true,
+  input_schema: {
+    type: 'object',
+    properties: {
+      lead_id: { type: 'string' },
+      key:     { type: 'string', description: 'e.g. "discovery_call_completed", "budget_known", "proposal_sent".' },
+      value:   { type: 'boolean' },
+    },
+    required: ['lead_id', 'key', 'value'],
+  },
+  async run(input) {
+    const { data: existing } = await supabase
+      .from('crm_leads')
+      .select('exit_checklist')
+      .eq('id', String(input.lead_id))
+      .maybeSingle()
+    const current = ((existing as { exit_checklist?: Record<string, boolean> } | null)?.exit_checklist) ?? {}
+    const next = { ...current, [String(input.key)]: !!input.value }
+    const { error } = await supabase.from('crm_leads')
+      .update({ exit_checklist: next })
+      .eq('id', String(input.lead_id))
+    if (error) throw new Error(error.message)
+    return { ok: true, exit_checklist: next }
+  },
+}
+
+const assignLead: NomoTool = {
+  name: 'assign_lead',
+  description:
+    'Assign a lead to a CRM user (admin/manager only). Pass user_id=null to unassign.',
+  write: true,
+  admin_only: true,
+  input_schema: {
+    type: 'object',
+    properties: {
+      lead_id: { type: 'string' },
+      user_id: { type: ['string','null'] },
+    },
+    required: ['lead_id', 'user_id'],
+  },
+  async run(input) {
+    const userId = input.user_id == null ? null : String(input.user_id)
+    const { error } = await supabase.from('crm_leads')
+      .update({ assigned_to: userId })
+      .eq('id', String(input.lead_id))
+    if (error) throw new Error(error.message)
+    return { ok: true, lead_id: input.lead_id, assigned_to: userId }
+  },
+}
+
 // ── Registry ─────────────────────────────────────────────────────────
 export const NOMO_TOOLS: NomoTool[] = [
+  // Read (8.2)
   searchLeads,
   getLead,
   queryPipeline,
   getMetrics,
   summarizePeriod,
   findRecentSignals,
+  // Write (8.3)
+  enqueueAgent,
+  moveLeadStage,
+  addActivity,
+  setFollowUp,
+  tickExitChecklist,
+  assignLead,
 ]
 
 export function findTool(name: string): NomoTool | undefined {
