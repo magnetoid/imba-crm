@@ -9,7 +9,7 @@ import { Textarea } from '@imba/shared/ui/textarea'
 import { Badge } from '@imba/shared/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@imba/shared/ui/select'
 import { Separator } from '@imba/shared/ui/separator'
-import { ArrowLeft, Loader2, Sparkles, Plus, Trash2, Mail, Phone, Globe, Building, Check, Copy, FileText, Calendar, Zap } from 'lucide-react'
+import { ArrowLeft, Loader2, Sparkles, Plus, Trash2, Mail, Phone, Globe, Building, Check, Copy, FileText, Calendar, Zap, MessageSquareText } from 'lucide-react'
 import { enrichLeadFromWebsite, logActivity } from '@/lib/crm-utils'
 import { logGeneration } from '@/lib/aiGenerations'
 import toast from 'react-hot-toast'
@@ -353,6 +353,16 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "recommendation"}`
               Enrich with AI
             </Button>
           )}
+          <Button
+            variant="outline" size="sm"
+            onClick={() => window.dispatchEvent(new CustomEvent('nomo:open', {
+              detail: { lead_id: lead.id, lead_label: `${lead.name}${lead.company ? ' (' + lead.company + ')' : ''}` },
+            }))}
+            className="gap-1.5"
+            title="Open Nomo with this lead pinned (⌘J also works)"
+          >
+            <MessageSquareText className="h-3.5 w-3.5 text-primary" /> Discuss with Nomo
+          </Button>
           <Button variant="destructive" size="sm" onClick={deleteLead}>
             <Trash2 className="h-3.5 w-3.5 mr-1.5" />Delete
           </Button>

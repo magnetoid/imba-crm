@@ -69,6 +69,10 @@ export interface CRMRuntimeSettings {
   ai_monthly_cap_cents: number
   ai_soft_cap_cents: number
   ai_cap_action: 'block' | 'downgrade' | 'require_approval'
+  nomo_enabled?: boolean
+  nomo_mode?: 'chat-only' | 'approval' | 'autopilot'
+  nomo_autopilot_tools?: string[]
+  nomo_system_prompt?: string
 }
 
 export interface ProviderCredentialStatus {
@@ -131,6 +135,13 @@ export const DEFAULT_CRM_RUNTIME_SETTINGS: CRMRuntimeSettings = {
   ai_monthly_cap_cents: 50000,
   ai_soft_cap_cents: 35000,
   ai_cap_action: 'block',
+  nomo_enabled: true,
+  nomo_mode: 'approval',
+  nomo_autopilot_tools: [
+    'search_leads','get_lead','query_pipeline','get_metrics',
+    'summarize_period','find_recent_signals',
+  ],
+  nomo_system_prompt: '',
 }
 
 export async function callAI<T = string>(prompt: string, options?: AIRequestOptions): Promise<T> {
@@ -261,7 +272,8 @@ export async function getCRMRuntimeSettings(): Promise<CRMRuntimeSettings> {
     'ai_outreach_tone', 'ai_auto_enrich', 'ai_inbox_auto_categorize',
     'company_name', 'company_description', 'usp', 'scheduling_url',
     'lead_sources_enabled', 'outreach_daily_limit',
-    'ai_monthly_cap_cents', 'ai_soft_cap_cents', 'ai_cap_action'
+    'ai_monthly_cap_cents', 'ai_soft_cap_cents', 'ai_cap_action',
+    'nomo_enabled', 'nomo_mode', 'nomo_autopilot_tools', 'nomo_system_prompt',
   ].join(',')
 
   const { data, error } = await supabase
@@ -283,6 +295,7 @@ export async function getCRMRuntimeSettings(): Promise<CRMRuntimeSettings> {
   merged.perplexity_models = normalizeStringArray(merged.perplexity_models)
   merged.ollama_models = normalizeStringArray(merged.ollama_models)
   merged.openrouter_models = normalizeStringArray(merged.openrouter_models)
+  merged.nomo_autopilot_tools = normalizeStringArray(merged.nomo_autopilot_tools)
   merged.active_ai_provider = (merged.active_ai_provider || 'anthropic') as AIProvider
   merged.active_ai_model = merged.active_ai_model || merged[`${merged.active_ai_provider}_model` as keyof CRMRuntimeSettings] as string || DEFAULT_CRM_RUNTIME_SETTINGS.active_ai_model
 

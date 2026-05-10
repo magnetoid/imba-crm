@@ -26,15 +26,33 @@ const providerMeta: Array<{
   { provider: 'openrouter', label: 'OpenRouter', modelKey: 'openrouter_model', modelsKey: 'openrouter_models', secretKey: 'openrouter_api_key', placeholder: 'anthropic/claude-sonnet-4' },
 ]
 
-type SettingsTab = 'ai' | 'smtp' | 'imap' | 'pop3' | 'caps' | 'company'
+type SettingsTab = 'ai' | 'nomo' | 'smtp' | 'imap' | 'pop3' | 'caps' | 'company'
 
 const TABS: Array<{ id: SettingsTab; label: string; description: string }> = [
   { id: 'ai',      label: 'AI providers',  description: 'Models, keys, routing and outreach tone' },
+  { id: 'nomo',    label: 'Nomo copilot',  description: 'Mode, autopilot allowlist, system prompt' },
   { id: 'smtp',    label: 'Outbound mail', description: 'SMTP delivery for outreach + replies' },
   { id: 'imap',    label: 'IMAP inbox',    description: 'Pull messages into the CRM via IMAP' },
   { id: 'pop3',    label: 'POP3 inbox',    description: 'Alternative inbound mail polling' },
   { id: 'caps',    label: 'Cost & limits', description: 'Monthly AI spend ceiling + cap action' },
   { id: 'company', label: 'Company',       description: 'Brand context the AI uses in prompts' },
+]
+
+// Tools shown in the Nomo autopilot allowlist editor. Keep in sync with
+// packages/inbox-puller/src/nomo-tools.ts NOMO_TOOLS.
+const NOMO_TOOL_OPTIONS: Array<{ name: string; label: string; write: boolean; danger?: boolean }> = [
+  { name: 'search_leads',         label: 'Search leads',          write: false },
+  { name: 'get_lead',             label: 'Get lead',              write: false },
+  { name: 'query_pipeline',       label: 'Query pipeline',        write: false },
+  { name: 'get_metrics',          label: 'Get metrics',           write: false },
+  { name: 'summarize_period',     label: 'Summarize period',      write: false },
+  { name: 'find_recent_signals',  label: 'Find recent signals',   write: false },
+  { name: 'enqueue_agent',        label: 'Queue agent',           write: true, danger: true },
+  { name: 'move_lead_stage',      label: 'Move lead stage',       write: true },
+  { name: 'add_activity',         label: 'Add activity',          write: true },
+  { name: 'set_follow_up',        label: 'Set follow-up',         write: true },
+  { name: 'tick_exit_checklist',  label: 'Tick exit checklist',   write: true },
+  { name: 'assign_lead',          label: 'Assign lead',           write: true, danger: true },
 ]
 
 function timeAgo(iso: string | null | undefined): string {
@@ -456,6 +474,126 @@ export default function AISettings() {
           </div>
         </div>
       </section>}
+
+      {activeTab === 'nomo' && (() => {
+        const enabled       = settings.nomo_enabled ?? true
+        const mode          = settings.nomo_mode ?? 'approval'
+        const allowlist     = (settings.nomo_autopilot_tools ?? []) as string[]
+        const systemPrompt  = settings.nomo_system_prompt ?? ''
+        const isAutopilot   = mode === 'autopilot'
+        function toggleTool(name: string) {
+          setSettings(prev => {
+            const cur = (prev.nomo_autopilot_tools ?? []) as string[]
+            const next = cur.includes(name) ? cur.filter(n => n !== name) : [...cur, name]
+            return { ...prev, nomo_autopilot_tools: next }
+          })
+        }
+        return (
+          <section className="mb-10">
+            <div className="flex items-center gap-2 mb-1">
+              <BrainCircuit className="h-4 w-4 text-primary" />
+              <h2 className="font-medium">Nomo copilot</h2>
+            </div>
+            <p className="text-xs text-muted-foreground mb-5">
+              Nomo is the in-app chat assistant (⌘J). It can answer questions about
+              your pipeline and queue / approve / move work through tool calls.
+            </p>
+
+            <div className="flex items-center gap-3 mb-5">
+              <Switch checked={enabled} onCheckedChange={v => setField('nomo_enabled', v)} />
+              <Label className="font-normal">Nomo enabled</Label>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+              {(['chat-only', 'approval', 'autopilot'] as const).map(m => {
+                const active = mode === m
+                const titles = {
+                  'chat-only': 'Chat only',
+                  'approval':  'Approval (recommended)',
+                  'autopilot': 'Autopilot',
+                }
+                const descs = {
+                  'chat-only': 'Read tools only. Nomo never writes — best for new operators.',
+                  'approval':  'Reads run freely. Writes propose and wait for your Approve click.',
+                  'autopilot': 'Reads + tools in the allowlist below run unattended. Other writes still pause.',
+                }
+                return (
+                  <button
+                    key={m}
+                    onClick={() => setField('nomo_mode', m)}
+                    className={`text-left rounded-lg border p-3 transition-colors ${
+                      active ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted'
+                    }`}
+                  >
+                    <div className={`text-sm font-medium ${active ? 'text-primary' : 'text-foreground'}`}>{titles[m]}</div>
+                    <div className="text-[11px] text-muted-foreground mt-1 leading-relaxed">{descs[m]}</div>
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="bg-card border border-border rounded-lg p-4 shadow-sm mb-5">
+              <p className="text-sm font-medium mb-1">Autopilot allowlist</p>
+              <p className="text-[11px] text-muted-foreground mb-3">
+                Tools that may run without prompting when the mode is set to <em>Autopilot</em>.
+                Read tools are safe-by-default. Be conservative with writes —
+                {' '}<span className="font-mono">enqueue_agent</span> and{' '}<span className="font-mono">assign_lead</span> have the largest blast radius.
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {NOMO_TOOL_OPTIONS.map(opt => {
+                  const on = allowlist.includes(opt.name)
+                  return (
+                    <button
+                      key={opt.name}
+                      type="button"
+                      onClick={() => toggleTool(opt.name)}
+                      disabled={!isAutopilot}
+                      className={`flex items-center justify-between text-left text-xs px-3 py-2 rounded border transition-colors ${
+                        !isAutopilot
+                          ? 'border-border bg-muted/30 text-muted-foreground cursor-not-allowed'
+                          : on
+                            ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
+                            : opt.danger
+                              ? 'border-red-200 bg-red-50/40 hover:bg-red-50 text-red-900'
+                              : 'border-border hover:bg-muted text-foreground'
+                      }`}
+                    >
+                      <div className="flex flex-col">
+                        <span className="font-mono">{opt.name}</span>
+                        <span className="text-[10px] opacity-70">{opt.label}{opt.write ? ' · write' : ''}</span>
+                      </div>
+                      <span className={`w-3 h-3 rounded-full border ${on ? 'bg-emerald-600 border-emerald-600' : 'border-border'}`} />
+                    </button>
+                  )
+                })}
+              </div>
+              {!isAutopilot && (
+                <p className="text-[11px] text-muted-foreground mt-3">
+                  Switch mode to <em>Autopilot</em> to edit the allowlist.
+                </p>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1.5 mb-5">
+              <Label>System prompt addition (optional)</Label>
+              <textarea
+                className="text-sm rounded-md border border-input bg-background px-3 py-2 font-mono"
+                rows={4}
+                value={systemPrompt}
+                onChange={e => setField('nomo_system_prompt', e.target.value)}
+                placeholder={`e.g. "Always reply in English. Always cite the lead's company name. Don't suggest meetings before 10am ET."`}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Appended to Nomo's base persona. Useful for style preferences or business rules.
+              </p>
+            </div>
+
+            <Button onClick={() => void saveAll()} disabled={saving} className="gap-2">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save settings
+            </Button>
+          </section>
+        )
+      })()}
 
       {activeTab === 'smtp' && <section className="mb-10">
         <div className="flex items-center gap-2 mb-1">
