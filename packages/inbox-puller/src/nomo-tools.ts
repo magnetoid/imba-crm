@@ -541,6 +541,45 @@ const listSequences: NomoTool = {
   },
 }
 
+// ── Phase 10.6: objection summary tool ───────────────────────────────
+const summarizeObjections: NomoTool = {
+  name: 'summarize_objections',
+  description:
+    'Aggregate the objections that came up across recent calls / inbound replies. Returns counts per objection slug, total deal value at risk, and a sample evidence quote per objection. Use this when the operator asks "what objections did we hear this week" / "where is the pipeline stalling".',
+  input_schema: {
+    type: 'object',
+    properties: {
+      days: { type: 'number', minimum: 1, maximum: 90, default: 7 },
+    },
+  },
+  async run(input) {
+    const days = Math.min(90, Math.max(1, Number(input.days ?? 7)))
+    const since = new Date(Date.now() - days * 86400_000).toISOString()
+    const { data } = await supabase
+      .from('crm_leads')
+      .select('id, name, company, value, objections')
+      .not('objections', 'eq', '[]')
+    const rows = (data ?? []) as Array<{ id: string; name: string; company: string | null; value: number | null; objections: Array<{ slug: string; label: string; evidence: string; captured_at: string }> }>
+    const buckets: Record<string, { slug: string; label: string; count: number; deal_value: number; sample: Array<{ lead_id: string; lead_name: string; company: string | null; evidence: string }> }> = {}
+    for (const r of rows) {
+      for (const o of (r.objections ?? [])) {
+        if (new Date(o.captured_at).getTime() < new Date(since).getTime()) continue
+        const b = buckets[o.slug] ??= { slug: o.slug, label: o.label, count: 0, deal_value: 0, sample: [] }
+        b.count++
+        b.deal_value += r.value ?? 0
+        if (b.sample.length < 3) {
+          b.sample.push({ lead_id: r.id, lead_name: r.name, company: r.company, evidence: o.evidence })
+        }
+      }
+    }
+    return {
+      since,
+      days,
+      objections: Object.values(buckets).sort((a, b) => b.count - a.count),
+    }
+  },
+}
+
 // ── Registry ─────────────────────────────────────────────────────────
 export const NOMO_TOOLS: NomoTool[] = [
   // Read (8.2)
@@ -551,6 +590,7 @@ export const NOMO_TOOLS: NomoTool[] = [
   summarizePeriod,
   findRecentSignals,
   listSequences,                // 10.1
+  summarizeObjections,          // 10.6
   // Write (8.3)
   enqueueAgent,
   moveLeadStage,

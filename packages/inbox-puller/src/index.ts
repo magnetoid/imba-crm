@@ -38,6 +38,7 @@ async function tick(): Promise<number> {
     dispatchSequences(),
     pollAgentJobs(),
     maybeQueueDealHealthSweep(),
+    maybeQueueProspectPipeline(),
     runSignalWatchers(),
     refreshMailReachHealth(),
   ])
@@ -74,6 +75,39 @@ async function maybeQueueDealHealthSweep() {
     triggered_by: 'cron:24h',
   })
   log('info', 'queued deal-health-scorer sweep')
+}
+
+// Once per 24h enqueue a prospect-pipeline sweep so the autonomous
+// reach-best-customers loop runs without operator intervention.
+let lastProspectCheck = 0
+async function maybeQueueProspectPipeline() {
+  const now = Date.now()
+  if (now - lastProspectCheck < 60 * 60 * 1000) return
+  lastProspectCheck = now
+
+  const { data: settingsRow } = await supabase
+    .from('crm_runtime_settings')
+    .select('signals_enabled')   // reuse this as a proxy "autonomous loop on" toggle
+    .eq('id', 1).maybeSingle()
+  if (!(settingsRow as { signals_enabled?: boolean } | null)?.signals_enabled) return
+
+  const { data } = await supabase
+    .from('crm_agent_jobs')
+    .select('finished_at')
+    .eq('agent_kind', 'prospect-pipeline')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const last = (data as { finished_at: string | null } | null)?.finished_at
+  const lastMs = last ? new Date(last).getTime() : 0
+  if (now - lastMs < SWEEP_INTERVAL_MS) return
+
+  await supabase.from('crm_agent_jobs').insert({
+    agent_kind: 'prospect-pipeline',
+    input: { mode: 'sweep' },
+    triggered_by: 'cron:24h',
+  })
+  log('info', 'queued prospect-pipeline sweep')
 }
 
 async function main() {
