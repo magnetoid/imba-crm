@@ -1,4 +1,7 @@
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&family=DM+Mono:wght@300;400&family=Inter:wght@300;400;500;600;700&family=Manrope:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+/* Admin-shell fonts (Inter / Manrope / JetBrains Mono) are loaded via
+   <link> in index.html for fastest paint. The marketing site fonts
+   (Cormorant Garamond, DM Mono) come in via that same <link>. */
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&display=swap');
 
 :root {
   --background: 240 10% 3.9%;
