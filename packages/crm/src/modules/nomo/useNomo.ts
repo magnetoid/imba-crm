@@ -8,12 +8,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '@imba/shared/supabase'
 
+export interface NomoToolCall {
+  id: string
+  name: string
+  input: Record<string, unknown>
+  result?: string                           // raw json string from the tool
+  is_error?: boolean
+  pending?: boolean                         // true while we're waiting for the result
+}
+
 export interface NomoMessage {
   id?: string
   thread_id?: string
   role: 'user' | 'assistant' | 'tool'
   content: string
   status?: 'streaming' | 'awaiting_approval' | 'approved' | 'rejected' | 'done' | 'failed'
+  tool_calls?: NomoToolCall[]               // populated as tool_call/tool_result events arrive
   tokens_in?: number | null
   tokens_out?: number | null
   cost_cents?: number | null
@@ -72,8 +82,31 @@ export function useNomo() {
         setError(`Failed to load thread (${res.status})`)
         return
       }
-      const json = await res.json() as { messages: NomoMessage[] }
-      setMessages(json.messages ?? [])
+      const json = await res.json() as {
+        messages: Array<NomoMessage & {
+          tool_calls?: Array<{ id: string; name: string; input: Record<string, unknown> }>
+          tool_results?: Array<{ tool_use_id: string; content: string; is_error?: boolean }>
+        }>
+      }
+      // Re-stitch tool_calls + tool_results onto each assistant message.
+      const stitched: NomoMessage[] = (json.messages ?? []).map(m => {
+        if (m.role !== 'assistant') return m as NomoMessage
+        const calls = (m.tool_calls ?? []).map(c => ({
+          id: c.id, name: c.name, input: c.input,
+          result: undefined as string | undefined,
+          is_error: false as boolean,
+          pending: false as boolean,
+        }))
+        // Match tool_results from any later 'tool' message (they're persisted
+        // separately on the assistant row's tool_results too — pick whichever).
+        const directResults = (m.tool_results ?? []) as Array<{ tool_use_id: string; content: string; is_error?: boolean }>
+        for (const r of directResults) {
+          const c = calls.find(x => x.id === r.tool_use_id)
+          if (c) { c.result = r.content; c.is_error = !!r.is_error }
+        }
+        return { ...(m as NomoMessage), tool_calls: calls.length > 0 ? calls : undefined }
+      })
+      setMessages(stitched)
     } catch (err) {
       setError((err as Error).message)
     }
@@ -141,6 +174,34 @@ export function useNomo() {
                 const last = next[next.length - 1]
                 if (last && last.role === 'assistant') {
                   last.content = (last.content ?? '') + json.text
+                }
+                return next
+              })
+            } else if (event === 'tool_call') {
+              setMessages(prev => {
+                const next = [...prev]
+                const last = next[next.length - 1]
+                if (last && last.role === 'assistant') {
+                  last.tool_calls = [...(last.tool_calls ?? []), {
+                    id:    json.id    as string,
+                    name:  json.name  as string,
+                    input: (json.input ?? {}) as Record<string, unknown>,
+                    pending: true,
+                  }]
+                }
+                return next
+              })
+            } else if (event === 'tool_result') {
+              setMessages(prev => {
+                const next = [...prev]
+                const last = next[next.length - 1]
+                if (last && last.role === 'assistant' && last.tool_calls) {
+                  const tc = last.tool_calls.find(t => t.id === json.tool_use_id)
+                  if (tc) {
+                    tc.result = String(json.content ?? '')
+                    tc.is_error = !!json.is_error
+                    tc.pending = false
+                  }
                 }
                 return next
               })

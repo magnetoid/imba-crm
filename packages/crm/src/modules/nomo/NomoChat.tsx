@@ -4,10 +4,10 @@
 // there's exactly one chat UI to style/maintain.
 
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Loader2, Send, StopCircle, AlertCircle } from 'lucide-react'
+import { Loader2, Send, StopCircle, AlertCircle, Wrench, ChevronRight } from 'lucide-react'
 import { Button } from '@imba/shared/ui/button'
 import { Textarea } from '@imba/shared/ui/textarea'
-import type { NomoMessage } from './useNomo'
+import type { NomoMessage, NomoToolCall } from './useNomo'
 
 interface Props {
   messages: NomoMessage[]
@@ -112,18 +112,28 @@ export function NomoChat({ messages, streaming, error, onSend, onCancel, compact
 function Bubble({ message }: { message: NomoMessage }) {
   const isUser = message.role === 'user'
   const isFailed = message.status === 'failed'
+  const hasTools = !isUser && message.tool_calls && message.tool_calls.length > 0
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div className={`max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words ${
-        isUser
-          ? 'bg-primary text-primary-foreground'
-          : isFailed
-            ? 'bg-red-50 text-red-900 border border-red-200'
-            : 'bg-muted text-foreground border border-border'
-      }`}>
-        {message.content || (message.status === 'streaming' && <span className="text-muted-foreground italic">…</span>)}
+      <div className={`max-w-[85%] flex flex-col gap-2 ${isUser ? 'items-end' : 'items-start'}`}>
+        {hasTools && (
+          <div className="flex flex-col gap-1.5 w-full">
+            {message.tool_calls!.map(tc => <ToolCard key={tc.id} call={tc} />)}
+          </div>
+        )}
+        {(message.content || message.status === 'streaming') && (
+          <div className={`rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words ${
+            isUser
+              ? 'bg-primary text-primary-foreground'
+              : isFailed
+                ? 'bg-red-50 text-red-900 border border-red-200'
+                : 'bg-muted text-foreground border border-border'
+          }`}>
+            {message.content || (message.status === 'streaming' && <span className="text-muted-foreground italic">…</span>)}
+          </div>
+        )}
         {!isUser && message.tokens_out != null && (
-          <div className="mt-1 text-[10px] font-mono opacity-60">
+          <div className="text-[10px] font-mono opacity-60">
             {message.model} · {message.tokens_in ?? '?'}/{message.tokens_out ?? '?'} tok
             {message.cost_cents != null ? ` · ${(message.cost_cents / 100).toFixed(4)}` : ''}
           </div>
@@ -131,4 +141,54 @@ function Bubble({ message }: { message: NomoMessage }) {
       </div>
     </div>
   )
+}
+
+function ToolCard({ call }: { call: NomoToolCall }) {
+  const [open, setOpen] = useState(false)
+  const status = call.is_error ? 'error' : call.pending ? 'running' : 'done'
+  const ringColor = status === 'error' ? 'border-red-200 bg-red-50' :
+                    status === 'running' ? 'border-amber-200 bg-amber-50' :
+                                            'border-border bg-card'
+  return (
+    <div className={`border rounded-md text-xs ${ringColor}`}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-3 py-1.5 text-left"
+      >
+        {call.pending
+          ? <Loader2 className="h-3 w-3 animate-spin text-amber-700 flex-shrink-0" />
+          : <Wrench className={`h-3 w-3 flex-shrink-0 ${call.is_error ? 'text-red-700' : 'text-emerald-700'}`} />}
+        <span className="font-mono font-medium flex-1 truncate">{call.name}</span>
+        <span className="text-[10px] opacity-70">{summariseInput(call.input)}</span>
+        <ChevronRight className={`h-3 w-3 transition-transform ${open ? 'rotate-90' : ''}`} />
+      </button>
+      {open && (
+        <div className="border-t border-border px-3 py-2 space-y-2 font-mono">
+          <div>
+            <p className="text-[10px] uppercase tracking-wider opacity-60 mb-1">Input</p>
+            <pre className="text-[11px] bg-background border border-border rounded p-1.5 overflow-x-auto">{JSON.stringify(call.input, null, 2)}</pre>
+          </div>
+          {call.result && (
+            <div>
+              <p className="text-[10px] uppercase tracking-wider opacity-60 mb-1">{call.is_error ? 'Error' : 'Result'}</p>
+              <pre className={`text-[11px] rounded p-1.5 overflow-x-auto ${call.is_error ? 'bg-red-50 text-red-900' : 'bg-background border border-border'}`}>{prettyResult(call.result)}</pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function summariseInput(input: Record<string, unknown>): string {
+  const entries = Object.entries(input ?? {}).slice(0, 3)
+  if (entries.length === 0) return ''
+  return entries
+    .map(([k, v]) => `${k}=${typeof v === 'string' ? v.slice(0, 24) : JSON.stringify(v).slice(0, 24)}`)
+    .join(' ')
+}
+
+function prettyResult(raw: string): string {
+  try { return JSON.stringify(JSON.parse(raw), null, 2).slice(0, 4000) }
+  catch { return raw.slice(0, 4000) }
 }

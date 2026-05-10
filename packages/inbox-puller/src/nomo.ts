@@ -1,30 +1,26 @@
-// Nomo — the agentic CRM copilot. Phase 8.1 (talking-only).
+// Nomo — the agentic CRM copilot. Phase 8.1 + 8.2 (read tools).
 //
 // Endpoints (mounted under /api/nomo by server.ts):
-//   POST  /api/nomo/chat   — SSE stream: takes { thread_id?, message, lead_id? }
-//                             returns text/event-stream with `delta`, `done`,
-//                             `error` events. Persists user + assistant rows
-//                             before/after streaming so refreshes resume.
+//   POST  /api/nomo/chat   — SSE stream. Body: { thread_id?, message, lead_id? }.
+//                             Streams tool_call + tool_result + delta + done events.
 //   GET   /api/nomo/threads        — list the caller's threads
 //   GET   /api/nomo/threads/:id    — full thread with messages
 //   POST  /api/nomo/threads/:id/archive
 //   DELETE /api/nomo/threads/:id
 //
-// Auth: same JWT pattern as the rest of /api/worker/* — verify with
-// JWT_SECRET, take auth.uid from the `sub` claim. Threads are scoped
-// to that user (admins can read all via RLS but we don't lean on that
-// here — simpler is to filter by user_id server-side).
-//
-// Streaming: we hit the configured AI provider (anthropic/openai/openrouter)
-// directly with stream:true and forward token-by-token. No tools yet —
-// 8.2 wires those in.
+// Tool loop (Anthropic native API): we call /v1/messages with `tools`,
+// inspect the response for tool_use blocks, execute them server-side,
+// append tool_result blocks, call again. Up to MAX_TOOL_ROUNDS iterations.
+// Final assistant text streams back as `delta` events for a snappy UX
+// even though earlier rounds are non-streaming.
 
 import type { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { supabase } from './supabase.js'
-import { getAISettings } from './ai.js'
+import { NOMO_TOOLS, findTool, anthropicToolSpec, openaiToolSpec } from './nomo-tools.js'
 
 const JWT_SECRET = process.env.JWT_SECRET || ''
+const MAX_TOOL_ROUNDS = 5
 
 interface ThreadRow {
   id: string
@@ -33,14 +29,6 @@ interface ThreadRow {
   pinned_lead_id: string | null
   archived: boolean
   last_message_at: string
-  created_at: string
-}
-
-interface MessageRow {
-  id: string
-  thread_id: string
-  role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string | null
   created_at: string
 }
 
@@ -114,19 +102,34 @@ function buildSystemPrompt(s: NomoSettings, pinnedLead?: Record<string, unknown>
                   `Default outreach tone: ${s.ai_outreach_tone || 'professional'}\n` +
                   (s.scheduling_url ? `Scheduling URL: ${s.scheduling_url}\n` : '')
   const persona =
-`You are Nomo, the in-app AI copilot for an AI-driven CRM. You help the operator manage their pipeline:
-- Answer questions about leads, deals, outreach activity, and metrics.
-- Suggest next actions: "shall I draft an email to X", "this deal is stalling, want to move it to lost?".
-- When the operator asks you to do something, propose the concrete action you'd take. (Tool-calling will land in a follow-up; for now you can describe what you'd do.)
-- Keep replies brief and operator-friendly. Bullet points over paragraphs.`
+`You are Nomo, the in-app AI copilot for the ${s.company_name || 'imba'} CRM. You help the operator manage their pipeline.
+
+Tools available:
+${NOMO_TOOLS.map(t => `- ${t.name}: ${t.description}`).join('\n')}
+
+Always call the relevant tool to ground your answers in real data. Don't guess pipeline numbers — call get_metrics. Don't list leads from memory — call search_leads.
+Use tools BEFORE replying. After receiving tool results, give the operator a concise, actionable summary (≤4 sentences + bullets where helpful).
+Avoid restating raw IDs and timestamps unless the operator asks. Quote names and headline numbers.
+When you suggest an action ("draft an email", "move stage to qualified"), SAY it — write tools land in the next sprint and the operator may ask you to do it manually for now.`
   const lead = pinnedLead
     ? `\n\nPinned lead context:\n${JSON.stringify(pinnedLead, null, 2)}`
     : ''
   return [persona, '', company, custom && `\nOperator instructions:\n${custom}`, lead].filter(Boolean).join('\n')
 }
 
+// ── Anthropic content block types ────────────────────────────────────
+interface AnthropicTextBlock { type: 'text'; text: string }
+interface AnthropicToolUseBlock { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+interface AnthropicToolResultBlock { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
+type AnthropicBlock = AnthropicTextBlock | AnthropicToolUseBlock | AnthropicToolResultBlock
+
+interface AnthropicMessage {
+  role: 'user' | 'assistant'
+  content: string | AnthropicBlock[]
+}
+
+// ── Chat handler ─────────────────────────────────────────────────────
 export function mountNomoApi(app: Hono) {
-  // ── Auth gate ─────────────────────────────────────────────────────────
   app.use('/api/nomo/*', async (c, next) => {
     const uid = await verifyAndExtractUid(c.req.header('authorization'))
     if (!uid) return c.json({ error: 'unauthorized' }, 401)
@@ -134,7 +137,6 @@ export function mountNomoApi(app: Hono) {
     await next()
   })
 
-  // ── List threads ──────────────────────────────────────────────────────
   app.get('/api/nomo/threads', async c => {
     const uid = c.get('uid' as never) as string
     const { data } = await supabase
@@ -144,10 +146,9 @@ export function mountNomoApi(app: Hono) {
       .eq('archived', false)
       .order('last_message_at', { ascending: false })
       .limit(50)
-    return c.json({ threads: (data as ThreadRow[] | null) ?? [] })
+    return c.json({ threads: data ?? [] })
   })
 
-  // ── Read thread + messages ───────────────────────────────────────────
   app.get('/api/nomo/threads/:id', async c => {
     const uid = c.get('uid' as never) as string
     const id  = c.req.param('id')
@@ -183,7 +184,6 @@ export function mountNomoApi(app: Hono) {
     return c.json({ ok: true })
   })
 
-  // ── Chat (SSE stream) ─────────────────────────────────────────────────
   app.post('/api/nomo/chat', async c => {
     const uid = c.get('uid' as never) as string
     const body = await c.req.json().catch(() => ({})) as {
@@ -197,7 +197,6 @@ export function mountNomoApi(app: Hono) {
       return c.json({ error: 'nomo disabled — enable in Settings → AI providers' }, 403)
     }
 
-    // Find or create thread.
     let threadId = body.thread_id ?? null
     if (threadId) {
       const { data: t } = await supabase
@@ -215,23 +214,20 @@ export function mountNomoApi(app: Hono) {
       if (!threadId) return c.json({ error: 'failed to create thread' }, 500)
     }
 
-    // Persist the user message before the model sees it.
     await supabase.from('crm_nomo_messages').insert({
       thread_id: threadId,
       role: 'user',
       content: userMessage.slice(0, 50_000),
     })
 
-    // Load full thread history (last 50 turns) for context.
     const { data: history } = await supabase
       .from('crm_nomo_messages')
-      .select('role, content')
+      .select('role, content, tool_calls, tool_results')
       .eq('thread_id', threadId)
       .order('created_at', { ascending: true })
       .limit(50)
-    const turns = (history as Array<{ role: string; content: string | null }> | null) ?? []
+    const turns = (history as Array<{ role: string; content: string | null; tool_calls: AnthropicToolUseBlock[] | null; tool_results: AnthropicToolResultBlock[] | null }> | null) ?? []
 
-    // Pinned-lead context.
     let pinnedLead: Record<string, unknown> | null = null
     if (body.lead_id) {
       const { data: l } = await supabase
@@ -239,159 +235,23 @@ export function mountNomoApi(app: Hono) {
         .select('id, name, email, company, stage, fit_score, intent_score, engagement_score, deal_health, deal_health_reason, value, last_email_sent_at, total_replies')
         .eq('id', body.lead_id)
         .maybeSingle()
-      pinnedLead = (l as Record<string, unknown> | null) ?? null
+      pinnedLead = l as Record<string, unknown> | null
     }
 
     const systemPrompt = buildSystemPrompt(settings, pinnedLead)
 
     return streamSSE(c, async (stream) => {
-      // Send the resolved thread_id up front so the client can save it
-      // immediately — useful when the message creates a brand-new thread.
       await stream.writeSSE({ event: 'thread', data: JSON.stringify({ thread_id: threadId }) })
 
-      let fullText = ''
-      let model = settings.active_ai_model
-      let tokensIn  = 0
-      let tokensOut = 0
-
+      const provider = settings.active_ai_provider
       try {
-        const provider = settings.active_ai_provider
-
         if (provider === 'anthropic') {
-          const apiKey = await getProviderKey('anthropic')
-          if (!apiKey) throw new Error('Anthropic API key not configured')
-          model = settings.anthropic_model || 'claude-sonnet-4-20250514'
-          const messages = turns
-            .filter(t => t.role === 'user' || t.role === 'assistant')
-            .map(t => ({ role: t.role, content: t.content ?? '' }))
-          const res = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-              'x-api-key': apiKey,
-              'anthropic-version': '2023-06-01',
-              'content-type': 'application/json',
-            },
-            body: JSON.stringify({
-              model,
-              max_tokens: 1024,
-              system: systemPrompt,
-              messages,
-              stream: true,
-            }),
-          })
-          if (!res.ok || !res.body) {
-            const errText = await res.text().catch(() => '')
-            throw new Error(`anthropic ${res.status}: ${errText.slice(0, 300)}`)
-          }
-          const reader = res.body.getReader()
-          const decoder = new TextDecoder()
-          let buffer = ''
-          while (true) {
-            const { value, done } = await reader.read()
-            if (done) break
-            buffer += decoder.decode(value, { stream: true })
-            const lines = buffer.split('\n')
-            buffer = lines.pop() ?? ''
-            for (const line of lines) {
-              if (!line.startsWith('data: ')) continue
-              try {
-                const json = JSON.parse(line.slice(6))
-                if (json.type === 'content_block_delta' && json.delta?.type === 'text_delta') {
-                  const t = json.delta.text as string
-                  fullText += t
-                  await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: t }) })
-                } else if (json.type === 'message_delta' && json.usage) {
-                  tokensOut = (json.usage.output_tokens as number | undefined) ?? tokensOut
-                } else if (json.type === 'message_start' && json.message?.usage) {
-                  tokensIn = (json.message.usage.input_tokens as number | undefined) ?? tokensIn
-                }
-              } catch { /* heartbeat / non-json */ }
-            }
-          }
+          await runAnthropicLoop({ stream, threadId: threadId!, settings, systemPrompt, turns, userMessage })
         } else if (provider === 'openai' || provider === 'openrouter') {
-          const apiKey = await getProviderKey(provider)
-          if (!apiKey) throw new Error(`${provider} API key not configured`)
-          model = provider === 'openai'
-            ? (settings.openai_model || 'gpt-4o-mini')
-            : (settings.openrouter_model || 'anthropic/claude-sonnet-4')
-          const url = provider === 'openai'
-            ? 'https://api.openai.com/v1/chat/completions'
-            : 'https://openrouter.ai/api/v1/chat/completions'
-          const messages: Array<{ role: string; content: string }> = [
-            { role: 'system', content: systemPrompt },
-          ]
-          for (const t of turns) {
-            if (t.role === 'user' || t.role === 'assistant') {
-              messages.push({ role: t.role, content: t.content ?? '' })
-            }
-          }
-          const res = await fetch(url, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-              'content-type': 'application/json',
-              ...(provider === 'openrouter' ? {
-                'HTTP-Referer': 'https://crm.imbaproduction.com',
-                'X-Title': 'imba.crm Nomo',
-              } : {}),
-            },
-            body: JSON.stringify({ model, messages, stream: true }),
-          })
-          if (!res.ok || !res.body) {
-            const errText = await res.text().catch(() => '')
-            throw new Error(`${provider} ${res.status}: ${errText.slice(0, 300)}`)
-          }
-          const reader = res.body.getReader()
-          const decoder = new TextDecoder()
-          let buffer = ''
-          while (true) {
-            const { value, done } = await reader.read()
-            if (done) break
-            buffer += decoder.decode(value, { stream: true })
-            const lines = buffer.split('\n')
-            buffer = lines.pop() ?? ''
-            for (const line of lines) {
-              if (!line.startsWith('data: ')) continue
-              const payload = line.slice(6).trim()
-              if (payload === '[DONE]') continue
-              try {
-                const json = JSON.parse(payload)
-                const t = json.choices?.[0]?.delta?.content as string | undefined
-                if (t) {
-                  fullText += t
-                  await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: t }) })
-                }
-                if (json.usage) {
-                  tokensIn  = (json.usage.prompt_tokens     as number | undefined) ?? tokensIn
-                  tokensOut = (json.usage.completion_tokens as number | undefined) ?? tokensOut
-                }
-              } catch { /* skip */ }
-            }
-          }
+          await runOpenAICompatibleLoop({ stream, threadId: threadId!, settings, systemPrompt, turns, userMessage, provider })
         } else {
-          throw new Error(`provider ${provider} not yet wired in Nomo. Use anthropic / openai / openrouter for now.`)
+          throw new Error(`provider "${provider}" not yet wired in Nomo. Use anthropic / openai / openrouter.`)
         }
-
-        // Persist the assistant message.
-        await supabase.from('crm_nomo_messages').insert({
-          thread_id: threadId,
-          role: 'assistant',
-          content: fullText,
-          model,
-          tokens_in:  tokensIn  || null,
-          tokens_out: tokensOut || null,
-        })
-
-        // Auto-title the thread once we have 1 user + 1 assistant turn.
-        if (turns.filter(t => t.role === 'assistant').length === 0) {
-          const title = userMessage.slice(0, 80)
-          await supabase.from('crm_nomo_threads').update({ title }).eq('id', threadId).is('title', null)
-        }
-
-        await stream.writeSSE({
-          event: 'done',
-          data: JSON.stringify({ tokens_in: tokensIn, tokens_out: tokensOut, model }),
-        })
       } catch (err) {
         log('error', 'nomo chat failed', { error: (err as Error).message })
         await supabase.from('crm_nomo_messages').insert({
@@ -407,7 +267,284 @@ export function mountNomoApi(app: Hono) {
   })
 }
 
-// Hono context augmentation so c.get('uid') is typed.
+// ── Anthropic tool loop ──────────────────────────────────────────────
+interface LoopArgs {
+  stream: { writeSSE: (e: { event: string; data: string }) => Promise<void> }
+  threadId: string
+  settings: NomoSettings
+  systemPrompt: string
+  turns: Array<{ role: string; content: string | null; tool_calls: AnthropicToolUseBlock[] | null; tool_results: AnthropicToolResultBlock[] | null }>
+  userMessage: string
+}
+
+async function runAnthropicLoop({ stream, threadId, settings, systemPrompt, turns, userMessage }: LoopArgs) {
+  const apiKey = await getProviderKey('anthropic')
+  if (!apiKey) throw new Error('Anthropic API key not configured')
+  const model = settings.anthropic_model || 'claude-sonnet-4-20250514'
+
+  // Reconstruct the conversation as Anthropic-shaped messages including
+  // any past tool calls/results so the model has full context.
+  const messages: AnthropicMessage[] = []
+  for (const t of turns) {
+    if (t.role === 'user') {
+      messages.push({ role: 'user', content: t.content ?? '' })
+    } else if (t.role === 'assistant') {
+      const blocks: AnthropicBlock[] = []
+      if (t.content) blocks.push({ type: 'text', text: t.content })
+      for (const tc of t.tool_calls ?? []) blocks.push(tc)
+      messages.push({ role: 'assistant', content: blocks.length > 0 ? blocks : (t.content ?? '') })
+    } else if (t.role === 'tool') {
+      const blocks: AnthropicToolResultBlock[] = (t.tool_results ?? []) as AnthropicToolResultBlock[]
+      if (blocks.length > 0) messages.push({ role: 'user', content: blocks })
+    }
+  }
+  // Latest user message wasn't yet in history when we loaded turns
+  // (we inserted it before reading) — wait, actually it WAS. Skip dup.
+  // If somehow the last message isn't this user message, append:
+  if (messages.length === 0 || messages[messages.length - 1].role !== 'user' || messages[messages.length - 1].content !== userMessage) {
+    // We loaded turns AFTER inserting the user row, so it should be there.
+    // But guard against an empty history.
+    if (messages.length === 0) messages.push({ role: 'user', content: userMessage })
+  }
+
+  let totalTokensIn = 0
+  let totalTokensOut = 0
+  let finalText = ''
+  const persistedToolCalls: AnthropicToolUseBlock[] = []
+  const persistedToolResults: AnthropicToolResultBlock[] = []
+
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 1500,
+        system: systemPrompt,
+        messages,
+        tools: anthropicToolSpec(),
+      }),
+    })
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '')
+      throw new Error(`anthropic ${res.status}: ${txt.slice(0, 300)}`)
+    }
+    const json = await res.json() as {
+      content: AnthropicBlock[]
+      stop_reason: string
+      usage?: { input_tokens?: number; output_tokens?: number }
+    }
+    totalTokensIn  += json.usage?.input_tokens  ?? 0
+    totalTokensOut += json.usage?.output_tokens ?? 0
+
+    // Stream any text the model produced this round.
+    for (const block of json.content) {
+      if (block.type === 'text' && block.text) {
+        finalText += block.text
+        // Chunk it so the UI feels responsive.
+        for (const piece of chunk(block.text, 24)) {
+          await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: piece }) })
+        }
+      }
+    }
+
+    // No tools → done.
+    if (json.stop_reason !== 'tool_use') {
+      // Persist the assistant message (text + any earlier tool_calls
+      // were already persisted in the loop below).
+      await supabase.from('crm_nomo_messages').insert({
+        thread_id: threadId,
+        role: 'assistant',
+        content: finalText,
+        tool_calls: persistedToolCalls,
+        model,
+        tokens_in:  totalTokensIn  || null,
+        tokens_out: totalTokensOut || null,
+      })
+      // Auto-title on first reply.
+      if (turns.filter(t => t.role === 'assistant').length === 0) {
+        const title = (turns[0]?.content ?? userMessage).slice(0, 80)
+        await supabase.from('crm_nomo_threads').update({ title }).eq('id', threadId).is('title', null)
+      }
+      await stream.writeSSE({
+        event: 'done',
+        data: JSON.stringify({ tokens_in: totalTokensIn, tokens_out: totalTokensOut, model }),
+      })
+      return
+    }
+
+    // Tool-use round: append assistant message with full content blocks
+    // so the next request includes them, then execute each tool.
+    messages.push({ role: 'assistant', content: json.content })
+
+    const toolResults: AnthropicToolResultBlock[] = []
+    for (const block of json.content) {
+      if (block.type !== 'tool_use') continue
+      const tu = block as AnthropicToolUseBlock
+      persistedToolCalls.push(tu)
+      await stream.writeSSE({
+        event: 'tool_call',
+        data: JSON.stringify({ id: tu.id, name: tu.name, input: tu.input }),
+      })
+      const tool = findTool(tu.name)
+      let result: AnthropicToolResultBlock
+      if (!tool) {
+        result = { type: 'tool_result', tool_use_id: tu.id, content: `unknown tool: ${tu.name}`, is_error: true }
+      } else {
+        try {
+          const out = await tool.run(tu.input)
+          const json = JSON.stringify(out).slice(0, 100_000)
+          result = { type: 'tool_result', tool_use_id: tu.id, content: json }
+        } catch (err) {
+          result = { type: 'tool_result', tool_use_id: tu.id, content: (err as Error).message, is_error: true }
+        }
+      }
+      toolResults.push(result)
+      persistedToolResults.push(result)
+      await stream.writeSSE({
+        event: 'tool_result',
+        data: JSON.stringify({ tool_use_id: tu.id, content: result.content, is_error: result.is_error ?? false }),
+      })
+    }
+    messages.push({ role: 'user', content: toolResults })
+  }
+
+  // Hit MAX_TOOL_ROUNDS without finishing — bail.
+  await stream.writeSSE({ event: 'error', data: JSON.stringify({ message: `tool loop exceeded ${MAX_TOOL_ROUNDS} rounds` }) })
+}
+
+// ── OpenAI/OpenRouter tool loop ──────────────────────────────────────
+interface OAIMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string | null
+  tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>
+  tool_call_id?: string
+}
+
+async function runOpenAICompatibleLoop(args: LoopArgs & { provider: 'openai' | 'openrouter' }) {
+  const { stream, threadId, settings, systemPrompt, turns, userMessage, provider } = args
+  const apiKey = await getProviderKey(provider)
+  if (!apiKey) throw new Error(`${provider} API key not configured`)
+  const url = provider === 'openai'
+    ? 'https://api.openai.com/v1/chat/completions'
+    : 'https://openrouter.ai/api/v1/chat/completions'
+  const model = provider === 'openai'
+    ? (settings.openai_model || 'gpt-4o-mini')
+    : (settings.openrouter_model || 'anthropic/claude-sonnet-4')
+
+  const messages: OAIMessage[] = [{ role: 'system', content: systemPrompt }]
+  for (const t of turns) {
+    if (t.role === 'user' || t.role === 'assistant') {
+      messages.push({ role: t.role as 'user' | 'assistant', content: t.content ?? '' })
+    }
+  }
+  if (messages[messages.length - 1].role !== 'user' || messages[messages.length - 1].content !== userMessage) {
+    if (messages.length <= 1) messages.push({ role: 'user', content: userMessage })
+  }
+
+  let totalTokensIn = 0, totalTokensOut = 0
+  let finalText = ''
+  const persistedToolCalls: AnthropicToolUseBlock[] = []
+  const persistedToolResults: AnthropicToolResultBlock[] = []
+
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+        ...(provider === 'openrouter' ? {
+          'HTTP-Referer': 'https://crm.imbaproduction.com',
+          'X-Title': 'imba.crm Nomo',
+        } : {}),
+      },
+      body: JSON.stringify({ model, messages, tools: openaiToolSpec(), tool_choice: 'auto' }),
+    })
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '')
+      throw new Error(`${provider} ${res.status}: ${txt.slice(0, 300)}`)
+    }
+    const json = await res.json() as {
+      choices?: Array<{ message: OAIMessage; finish_reason?: string }>
+      usage?: { prompt_tokens?: number; completion_tokens?: number }
+    }
+    totalTokensIn  += json.usage?.prompt_tokens     ?? 0
+    totalTokensOut += json.usage?.completion_tokens ?? 0
+    const choice = json.choices?.[0]
+    if (!choice) throw new Error(`${provider}: empty choice`)
+
+    if (choice.message.content) {
+      finalText += choice.message.content
+      for (const piece of chunk(choice.message.content, 24)) {
+        await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: piece }) })
+      }
+    }
+
+    if (!choice.message.tool_calls || choice.message.tool_calls.length === 0) {
+      await supabase.from('crm_nomo_messages').insert({
+        thread_id: threadId,
+        role: 'assistant',
+        content: finalText,
+        tool_calls: persistedToolCalls,
+        model,
+        tokens_in:  totalTokensIn  || null,
+        tokens_out: totalTokensOut || null,
+      })
+      if (turns.filter(t => t.role === 'assistant').length === 0) {
+        const title = (turns[0]?.content ?? userMessage).slice(0, 80)
+        await supabase.from('crm_nomo_threads').update({ title }).eq('id', threadId).is('title', null)
+      }
+      await stream.writeSSE({
+        event: 'done',
+        data: JSON.stringify({ tokens_in: totalTokensIn, tokens_out: totalTokensOut, model }),
+      })
+      return
+    }
+
+    messages.push({
+      role: 'assistant',
+      content: choice.message.content ?? null,
+      tool_calls: choice.message.tool_calls,
+    })
+
+    for (const call of choice.message.tool_calls) {
+      let input: Record<string, unknown> = {}
+      try { input = JSON.parse(call.function.arguments) } catch { /* tolerate */ }
+      const tu: AnthropicToolUseBlock = { type: 'tool_use', id: call.id, name: call.function.name, input }
+      persistedToolCalls.push(tu)
+      await stream.writeSSE({
+        event: 'tool_call',
+        data: JSON.stringify({ id: call.id, name: call.function.name, input }),
+      })
+      const tool = findTool(call.function.name)
+      let resultText: string
+      let isError = false
+      if (!tool) { resultText = `unknown tool: ${call.function.name}`; isError = true }
+      else {
+        try { resultText = JSON.stringify(await tool.run(input)).slice(0, 100_000) }
+        catch (err) { resultText = (err as Error).message; isError = true }
+      }
+      messages.push({ role: 'tool', tool_call_id: call.id, content: resultText })
+      persistedToolResults.push({ type: 'tool_result', tool_use_id: call.id, content: resultText, is_error: isError })
+      await stream.writeSSE({
+        event: 'tool_result',
+        data: JSON.stringify({ tool_use_id: call.id, content: resultText, is_error: isError }),
+      })
+    }
+  }
+  await stream.writeSSE({ event: 'error', data: JSON.stringify({ message: `tool loop exceeded ${MAX_TOOL_ROUNDS} rounds` }) })
+}
+
+function chunk(s: string, size: number): string[] {
+  const out: string[] = []
+  for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size))
+  return out
+}
+
 declare module 'hono' {
   interface ContextVariableMap { uid: string }
 }
