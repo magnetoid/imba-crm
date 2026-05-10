@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { LogOut, Loader2, Search } from 'lucide-react'
+import { LogOut, Loader2, Search, Sparkles } from 'lucide-react'
 import { supabase } from '@imba/shared/supabase'
 import { useSession, hasRole } from '@imba/shared/auth'
 import { Separator } from '@imba/shared/ui/separator'
@@ -12,6 +12,7 @@ import {
 import { GROUPS, modulesByGroup, primaryPath, MODULES } from '@/modules/registry'
 import type { CRMModule } from '@/modules/types'
 import { useHotLeadAlerts } from '@/lib/useHotLeadAlerts'
+import NomoPanel from '@/modules/nomo/NomoPanel'
 
 function NavItem({ m }: { m: CRMModule }) {
   const Icon = m.icon
@@ -37,6 +38,7 @@ export default function CRMLayout() {
   const { session } = useSession()
   const navigate = useNavigate()
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [nomoOpen, setNomoOpen] = useState(false)
 
   useEffect(() => {
     document.body.classList.add('admin-shell')
@@ -46,12 +48,15 @@ export default function CRMLayout() {
   // Hot-lead push alerts (speed-to-lead).
   useHotLeadAlerts()
 
-  // Cmd/Ctrl-K opens the command palette.
+  // ⌘K command palette, ⌘J Nomo panel.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         setPaletteOpen(o => !o)
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
+        e.preventDefault()
+        setNomoOpen(o => !o)
       }
     }
     document.addEventListener('keydown', onKey)
@@ -146,6 +151,20 @@ export default function CRMLayout() {
           })}
         </CommandList>
       </CommandDialog>
+
+      {/* Nomo: side panel + floating launcher */}
+      <NomoPanel open={nomoOpen} onClose={() => setNomoOpen(false)} />
+      {!nomoOpen && (
+        <button
+          onClick={() => setNomoOpen(true)}
+          className="fixed bottom-5 right-5 z-30 h-12 px-4 rounded-full shadow-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity flex items-center gap-2"
+          title="Ask Nomo (⌘J)"
+        >
+          <Sparkles className="h-4 w-4" />
+          <span className="text-sm font-medium">Ask Nomo</span>
+          <Kbd className="bg-black/20 text-primary-foreground border-white/20">⌘J</Kbd>
+        </button>
+      )}
     </div>
   )
 }
