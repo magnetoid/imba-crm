@@ -141,10 +141,10 @@ export function normalizeUrl(url: string): string {
 
 export function scoreColor(score: number | null): string {
   if (score === null) return 'text-muted-foreground'
-  if (score >= 80) return 'text-emerald-400'
-  if (score >= 60) return 'text-amber-400'
+  if (score >= 80) return 'text-emerald-700'
+  if (score >= 60) return 'text-amber-700'
   if (score >= 40) return 'text-orange-400'
-  return 'text-red-400'
+  return 'text-red-700'
 }
 
 export function scoreBg(score: number | null): string {

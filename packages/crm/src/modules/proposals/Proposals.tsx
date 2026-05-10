@@ -51,10 +51,10 @@ interface Proposal {
 
 const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
   draft:    { label: 'Draft',    color: 'text-muted-foreground', bg: 'bg-muted/20' },
-  sent:     { label: 'Sent',     color: 'text-blue-400', bg: 'bg-blue-500/10' },
+  sent:     { label: 'Sent',     color: 'text-blue-700', bg: 'bg-blue-100' },
   viewed:   { label: 'Viewed',   color: 'text-cyan-400', bg: 'bg-cyan-500/10' },
-  signed:   { label: 'Signed',   color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
-  declined: { label: 'Declined', color: 'text-red-400', bg: 'bg-red-500/10' },
+  signed:   { label: 'Signed',   color: 'text-emerald-700', bg: 'bg-emerald-100' },
+  declined: { label: 'Declined', color: 'text-red-700', bg: 'bg-red-100' },
   expired:  { label: 'Expired',  color: 'text-muted-foreground/50', bg: 'bg-muted/10' },
 }
 
@@ -287,7 +287,7 @@ Keep it under 600 words.`
       <div className="flex items-center gap-2 mb-5 flex-wrap">
         {['all', ...Object.keys(STATUS_META)].map(s => (
           <button key={s} onClick={() => setStatusFilter(s)}
-            className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${statusFilter === s ? 'bg-amber-500/15 text-amber-400' : 'text-muted-foreground hover:text-foreground'}`}>
+            className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${statusFilter === s ? 'bg-amber-100 text-amber-700' : 'text-muted-foreground hover:text-foreground'}`}>
             {s === 'all' ? `All (${proposals.length})` : `${STATUS_META[s]?.label || s} (${proposals.filter(p => p.status === s).length})`}
           </button>
         ))}
@@ -335,10 +335,10 @@ Keep it under 600 words.`
                     <Eye className="h-3 w-3" /> View
                   </Button>
                   <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => copyContent(proposal)}>
-                    {copied === proposal.id ? <><Check className="h-3 w-3 text-emerald-400" />Copied</> : <><Copy className="h-3 w-3" />Copy</>}
+                    {copied === proposal.id ? <><Check className="h-3 w-3 text-emerald-700" />Copied</> : <><Copy className="h-3 w-3" />Copy</>}
                   </Button>
                   {proposal.status === 'draft' && (
-                    <Button size="sm" className="h-7 text-xs gap-1 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/20"
+                    <Button size="sm" className="h-7 text-xs gap-1 bg-blue-100 text-blue-700 hover:bg-blue-500/20 border border-blue-500/20"
                       onClick={() => updateStatus(proposal.id, 'sent', { sent_at: new Date().toISOString() })}>
                       <Send className="h-3 w-3" /> Mark sent
                     </Button>
@@ -351,11 +351,11 @@ Keep it under 600 words.`
                   )}
                   {['sent', 'viewed'].includes(proposal.status) && (
                     <>
-                      <Button size="sm" className="h-7 text-xs gap-1 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20"
+                      <Button size="sm" className="h-7 text-xs gap-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 border border-emerald-500/20"
                         onClick={() => updateStatus(proposal.id, 'signed', { signed_at: new Date().toISOString() })}>
                         <CheckCircle2 className="h-3 w-3" /> Signed
                       </Button>
-                      <Button size="sm" variant="ghost" className="h-7 text-xs gap-1 text-red-400"
+                      <Button size="sm" variant="ghost" className="h-7 text-xs gap-1 text-red-700"
                         onClick={() => updateStatus(proposal.id, 'declined')}>
                         <XCircle className="h-3 w-3" /> Declined
                       </Button>

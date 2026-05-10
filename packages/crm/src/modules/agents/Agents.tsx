@@ -22,7 +22,7 @@ interface AgentJob {
 const STATUS_BADGE: Record<string, { label: string; className: string; icon: typeof CheckCircle2 }> = {
   queued:             { label: 'Queued',          className: 'bg-zinc-500/15 text-zinc-300 border-zinc-500/30',     icon: Clock },
   running:            { label: 'Running',         className: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',     icon: Loader2 },
-  awaiting_approval:  { label: 'Needs approval',  className: 'bg-amber-500/20 text-amber-300 border-amber-500/40',  icon: AlertCircle },
+  awaiting_approval:  { label: 'Needs approval',  className: 'bg-amber-200 text-amber-700 border-amber-500/40',  icon: AlertCircle },
   paused:             { label: 'Paused',          className: 'bg-zinc-500/15 text-zinc-300 border-zinc-500/30',     icon: Pause },
   finished:           { label: 'Done',            className: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30', icon: CheckCircle2 },
   cancelled:          { label: 'Cancelled',       className: 'bg-zinc-500/15 text-zinc-400 border-zinc-500/30',     icon: XCircle },

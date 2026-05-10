@@ -205,7 +205,7 @@ export default function PromptRegistry() {
                   >
                     <div className="flex items-center justify-between mb-1">
                       <span className="font-mono text-sm font-semibold">{g.prompt_key}</span>
-                      {g.activeVersion && <Badge variant="outline" className="text-[0.6rem] h-5 bg-emerald-500/10 text-emerald-400 border-emerald-500/20">v{g.activeVersion.version} active</Badge>}
+                      {g.activeVersion && <Badge variant="outline" className="text-[0.6rem] h-5 bg-emerald-100 text-emerald-700 border-emerald-500/20">v{g.activeVersion.version} active</Badge>}
                     </div>
                     <p className="text-xs text-muted-foreground line-clamp-1">{g.activeVersion?.description || `${g.allVersions.length} versions`}</p>
                   </button>
@@ -227,7 +227,7 @@ export default function PromptRegistry() {
               </div>
               <div className="flex-1 overflow-y-auto p-4 space-y-6">
                 {selectedGroup.allVersions.map(v => (
-                  <div key={v.id} className={`border rounded-lg p-4 ${v.is_active ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-border'}`}>
+                  <div key={v.id} className={`border rounded-lg p-4 ${v.is_active ? 'border-emerald-500/50 bg-emerald-50' : 'border-border'}`}>
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-3">
                         <span className="font-mono text-sm font-bold">v{v.version}</span>

@@ -70,10 +70,10 @@ function ScoreGauge({ score, label, size = 'md' }: { score: number | null; label
 function StatusBadge({ status }: { status: SiteAnalysis['status'] }) {
   const config = {
     pending: { label: 'Pending', cls: 'bg-muted text-muted-foreground', icon: Loader2 },
-    crawling: { label: 'Crawling', cls: 'bg-blue-500/10 text-blue-400', icon: Globe },
-    analyzing: { label: 'Analyzing', cls: 'bg-purple-500/10 text-purple-400', icon: Sparkles },
-    complete: { label: 'Complete', cls: 'bg-emerald-500/10 text-emerald-400', icon: CheckCircle },
-    failed: { label: 'Failed', cls: 'bg-red-500/10 text-red-400', icon: AlertCircle },
+    crawling: { label: 'Crawling', cls: 'bg-blue-100 text-blue-700', icon: Globe },
+    analyzing: { label: 'Analyzing', cls: 'bg-violet-100 text-violet-700', icon: Sparkles },
+    complete: { label: 'Complete', cls: 'bg-emerald-100 text-emerald-700', icon: CheckCircle },
+    failed: { label: 'Failed', cls: 'bg-red-100 text-red-700', icon: AlertCircle },
   }[status]
 
   const Icon = config.icon
@@ -245,10 +245,10 @@ export default function SiteAnalyzer() {
       {/* Stats cards */}
       <div className="grid grid-cols-4 gap-4 mb-6">
         {[
-          { label: 'Total Analyses', value: stats.total, icon: Globe, color: 'text-blue-400' },
-          { label: 'Completed', value: stats.complete, icon: CheckCircle, color: 'text-emerald-400' },
-          { label: 'Avg Score', value: stats.avgScore, icon: TrendingUp, color: 'text-amber-400' },
-          { label: 'No Video', value: stats.noVideo, icon: Video, color: 'text-red-400' },
+          { label: 'Total Analyses', value: stats.total, icon: Globe, color: 'text-blue-700' },
+          { label: 'Completed', value: stats.complete, icon: CheckCircle, color: 'text-emerald-700' },
+          { label: 'Avg Score', value: stats.avgScore, icon: TrendingUp, color: 'text-amber-700' },
+          { label: 'No Video', value: stats.noVideo, icon: Video, color: 'text-red-700' },
         ].map(({ label, value, icon: Icon, color }) => (
           <div key={label} className="bg-card border border-border rounded-lg p-4">
             <div className="flex items-center gap-2 mb-2">
@@ -364,11 +364,11 @@ export default function SiteAnalyzer() {
                   <td className="px-4 py-3 text-center">
                     {a.status === 'complete' ? (
                       (a.content_audit?.video_count ?? 0) === 0 ? (
-                        <Badge variant="outline" className="text-[0.6rem] border-red-500/30 text-red-400 gap-1">
+                        <Badge variant="outline" className="text-[0.6rem] border-red-500/30 text-red-700 gap-1">
                           <Video className="h-2.5 w-2.5" />None
                         </Badge>
                       ) : (
-                        <Badge variant="outline" className="text-[0.6rem] border-emerald-500/30 text-emerald-400 gap-1">
+                        <Badge variant="outline" className="text-[0.6rem] border-emerald-500/30 text-emerald-700 gap-1">
                           <Video className="h-2.5 w-2.5" />{a.content_audit.video_count}
                         </Badge>
                       )
@@ -405,7 +405,7 @@ export default function SiteAnalyzer() {
                       </a>
                       <Button
                         variant="ghost" size="sm"
-                        className="h-7 w-7 p-0 text-muted-foreground hover:text-red-400"
+                        className="h-7 w-7 p-0 text-muted-foreground hover:text-red-700"
                         onClick={() => handleDelete(a.id)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />

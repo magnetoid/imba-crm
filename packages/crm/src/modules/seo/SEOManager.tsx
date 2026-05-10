@@ -61,20 +61,20 @@ const EMPTY: Omit<SeoPage, 'id' | 'created_at'> = {
 }
 
 function titleScore(title?: string) {
-  if (!title) return { score: 0, label: 'Missing', color: 'text-red-400' }
+  if (!title) return { score: 0, label: 'Missing', color: 'text-red-700' }
   const l = title.length
   if (l <= 60) return { score: 100, label: `${l}/60 ✓`, color: 'text-green-400' }
   if (l <= 70) return { score: 60, label: `${l}/60 — too long`, color: 'text-yellow-400' }
-  return { score: 20, label: `${l}/60 — way too long`, color: 'text-red-400' }
+  return { score: 20, label: `${l}/60 — way too long`, color: 'text-red-700' }
 }
 
 function descScore(desc?: string) {
-  if (!desc) return { score: 0, label: 'Missing', color: 'text-red-400' }
+  if (!desc) return { score: 0, label: 'Missing', color: 'text-red-700' }
   const l = desc.length
   if (l >= 120 && l <= 160) return { score: 100, label: `${l} chars ✓`, color: 'text-green-400' }
   if (l >= 80 && l < 120) return { score: 60, label: `${l} chars — short`, color: 'text-yellow-400' }
   if (l > 160) return { score: 60, label: `${l} chars — truncated`, color: 'text-yellow-400' }
-  return { score: 20, label: `${l} chars — too short`, color: 'text-red-400' }
+  return { score: 20, label: `${l} chars — too short`, color: 'text-red-700' }
 }
 
 function pageHealth(row: SeoPage): number {
@@ -177,13 +177,13 @@ Return ONLY the JSON array, no other text.`
   }
 
   const intentColor = (intent: string) => ({
-    informational: 'bg-blue-500/10 text-blue-400',
-    commercial: 'bg-amber-500/10 text-amber-400',
+    informational: 'bg-blue-100 text-blue-700',
+    commercial: 'bg-amber-100 text-amber-700',
     transactional: 'bg-green-500/10 text-green-400',
-    navigational: 'bg-purple-500/10 text-purple-400',
+    navigational: 'bg-violet-100 text-violet-700',
   }[intent] || 'bg-muted text-muted-foreground')
 
-  const diffColor = (d: string) => ({ low: 'text-green-400', medium: 'text-yellow-400', high: 'text-red-400' }[d] || '')
+  const diffColor = (d: string) => ({ low: 'text-green-400', medium: 'text-yellow-400', high: 'text-red-700' }[d] || '')
 
   return (
     <div>
@@ -537,7 +537,7 @@ Return ONLY a JSON object:
       <p className="text-sm text-muted-foreground mb-5">
         AI generates and saves meta title + description for all pages that don't have an override yet.
         {uncovered.length > 0
-          ? <span className="text-amber-400 ml-1">{uncovered.length} pages need optimization.</span>
+          ? <span className="text-amber-700 ml-1">{uncovered.length} pages need optimization.</span>
           : <span className="text-green-400 ml-1">All {ALL_PAGES.length} pages are covered.</span>}
       </p>
 
@@ -546,7 +546,7 @@ Return ONLY a JSON object:
           <p className="text-xs font-mono text-muted-foreground mb-2">Pages to optimize:</p>
           <div className="flex flex-wrap gap-1.5">
             {uncovered.map(p => (
-              <span key={p.path} className="text-xs bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded">{p.label}</span>
+              <span key={p.path} className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded">{p.label}</span>
             ))}
           </div>
         </div>
@@ -566,7 +566,7 @@ Return ONLY a JSON object:
           <p className="text-xs font-mono text-muted-foreground mb-2">Progress</p>
           <div className="flex flex-col gap-1">
             {progress.map((p, i) => (
-              <p key={i} className={`text-xs font-mono ${p.startsWith('✓') ? 'text-green-400' : p.startsWith('✗') ? 'text-red-400' : 'text-muted-foreground'}`}>{p}</p>
+              <p key={i} className={`text-xs font-mono ${p.startsWith('✓') ? 'text-green-400' : p.startsWith('✗') ? 'text-red-700' : 'text-muted-foreground'}`}>{p}</p>
             ))}
             {done && <p className="text-xs font-mono text-green-400 mt-1">— Batch complete. Refresh the Pages tab to see results.</p>}
           </div>
@@ -1002,7 +1002,7 @@ Return ONLY valid JSON-LD. No markdown, no explanation.`
                 { label: 'Sitemap URL declared',   ok: true },
               ].map(({ label, ok }) => (
                 <div key={label} className="flex items-center gap-2">
-                  {ok ? <CheckCircle className="h-3.5 w-3.5 text-green-500 flex-shrink-0" /> : <AlertCircle className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />}
+                  {ok ? <CheckCircle className="h-3.5 w-3.5 text-green-500 flex-shrink-0" /> : <AlertCircle className="h-3.5 w-3.5 text-red-700 flex-shrink-0" />}
                   <span className="text-xs text-foreground">{label}</span>
                 </div>
               ))}
@@ -1026,7 +1026,7 @@ Return ONLY valid JSON-LD. No markdown, no explanation.`
                 { label: 'Content policy',        ok: true },
               ].map(({ label, ok }) => (
                 <div key={label} className="flex items-center gap-2">
-                  {ok ? <CheckCircle className="h-3.5 w-3.5 text-green-500 flex-shrink-0" /> : <AlertCircle className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />}
+                  {ok ? <CheckCircle className="h-3.5 w-3.5 text-green-500 flex-shrink-0" /> : <AlertCircle className="h-3.5 w-3.5 text-red-700 flex-shrink-0" />}
                   <span className="text-xs text-foreground">{label}</span>
                 </div>
               ))}

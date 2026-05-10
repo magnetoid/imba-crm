@@ -403,15 +403,15 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "recommendation"}`
             {/* Follow-up date */}
             <div className="mt-4 grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-1">
-                <Label className={`text-xs flex items-center gap-1.5 ${isOverdue ? 'text-red-400' : ''}`}>
+                <Label className={`text-xs flex items-center gap-1.5 ${isOverdue ? 'text-red-700' : ''}`}>
                   <Calendar className="h-3 w-3" />
-                  Next follow-up {isOverdue && <span className="text-red-400">— overdue!</span>}
+                  Next follow-up {isOverdue && <span className="text-red-700">— overdue!</span>}
                 </Label>
                 <Input
                   type="date"
                   defaultValue={lead.next_follow_up ? lead.next_follow_up.split('T')[0] : ''}
                   onBlur={e => saveField('next_follow_up', e.target.value ? new Date(e.target.value).toISOString() : null)}
-                  className={`h-8 text-sm ${isOverdue ? 'border-red-400/50 text-red-400' : ''}`}
+                  className={`h-8 text-sm ${isOverdue ? 'border-red-400/50 text-red-700' : ''}`}
                 />
               </div>
               <div className="flex flex-col gap-1">

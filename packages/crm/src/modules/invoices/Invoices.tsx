@@ -53,9 +53,9 @@ interface Invoice {
 
 const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
   draft:     { label: 'Draft',     color: 'text-muted-foreground', bg: 'bg-muted/20' },
-  sent:      { label: 'Sent',      color: 'text-blue-400', bg: 'bg-blue-500/10' },
-  paid:      { label: 'Paid',      color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
-  overdue:   { label: 'Overdue',   color: 'text-red-400', bg: 'bg-red-500/10' },
+  sent:      { label: 'Sent',      color: 'text-blue-700', bg: 'bg-blue-100' },
+  paid:      { label: 'Paid',      color: 'text-emerald-700', bg: 'bg-emerald-100' },
+  overdue:   { label: 'Overdue',   color: 'text-red-700', bg: 'bg-red-100' },
   cancelled: { label: 'Cancelled', color: 'text-muted-foreground/50', bg: 'bg-muted/10' },
 }
 
@@ -224,9 +224,9 @@ export default function Invoices() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-8">
         {[
           { label: 'Total invoices', value: displayInvoices.length, icon: Receipt },
-          { label: 'Revenue', value: totalRevenue ? `$${totalRevenue.toLocaleString()}` : '$0', icon: DollarSign, color: 'text-emerald-400' },
-          { label: 'Outstanding', value: outstanding ? `$${outstanding.toLocaleString()}` : '$0', icon: Clock, color: outstanding > 0 ? 'text-amber-400' : undefined },
-          { label: 'Overdue', value: displayInvoices.filter(i => i.status === 'overdue').length, icon: AlertCircle, color: displayInvoices.some(i => i.status === 'overdue') ? 'text-red-400' : undefined },
+          { label: 'Revenue', value: totalRevenue ? `$${totalRevenue.toLocaleString()}` : '$0', icon: DollarSign, color: 'text-emerald-700' },
+          { label: 'Outstanding', value: outstanding ? `$${outstanding.toLocaleString()}` : '$0', icon: Clock, color: outstanding > 0 ? 'text-amber-700' : undefined },
+          { label: 'Overdue', value: displayInvoices.filter(i => i.status === 'overdue').length, icon: AlertCircle, color: displayInvoices.some(i => i.status === 'overdue') ? 'text-red-700' : undefined },
         ].map(s => (
           <div key={s.label} className="bg-card border border-border rounded-lg px-4 py-3">
             <div className="flex items-center gap-2 mb-1">
@@ -264,7 +264,7 @@ export default function Invoices() {
       <div className="flex items-center gap-2 mb-5 flex-wrap">
         {['all', ...Object.keys(STATUS_META)].map(s => (
           <button key={s} onClick={() => setStatusFilter(s)}
-            className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${statusFilter === s ? 'bg-amber-500/15 text-amber-400' : 'text-muted-foreground hover:text-foreground'}`}>
+            className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${statusFilter === s ? 'bg-amber-100 text-amber-700' : 'text-muted-foreground hover:text-foreground'}`}>
             {s === 'all' ? `All (${displayInvoices.length})` : `${STATUS_META[s]?.label || s} (${displayInvoices.filter(i => i.status === s).length})`}
           </button>
         ))}
@@ -297,7 +297,7 @@ export default function Invoices() {
                       {inv.tax > 0 && <span>(${inv.amount.toLocaleString()} + ${inv.tax.toLocaleString()} tax)</span>}
                       <span>{inv.currency}</span>
                       {inv.due_date && (
-                        <span className={isOverdue ? 'text-red-400 font-medium' : ''}>
+                        <span className={isOverdue ? 'text-red-700 font-medium' : ''}>
                           {isOverdue ? 'Overdue — ' : 'Due '}
                           {new Date(inv.due_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
                         </span>
@@ -311,7 +311,7 @@ export default function Invoices() {
 
                 <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-border flex-wrap">
                   <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => copyInvoice(inv)}>
-                    {copied === inv.id ? <><Check className="h-3 w-3 text-emerald-400" />Copied</> : <><Copy className="h-3 w-3" />Copy</>}
+                    {copied === inv.id ? <><Check className="h-3 w-3 text-emerald-700" />Copied</> : <><Copy className="h-3 w-3" />Copy</>}
                   </Button>
                   {inv.stripe_payment_url ? (
                     <a href={inv.stripe_payment_url} target="_blank" rel="noopener noreferrer">
@@ -330,13 +330,13 @@ export default function Invoices() {
                     )
                   )}
                   {inv.status === 'draft' && (
-                    <Button size="sm" className="h-7 text-xs gap-1 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/20"
+                    <Button size="sm" className="h-7 text-xs gap-1 bg-blue-100 text-blue-700 hover:bg-blue-500/20 border border-blue-500/20"
                       onClick={() => updateStatus(inv.id, 'sent')}>
                       <Send className="h-3 w-3" /> Mark sent
                     </Button>
                   )}
                   {['sent', 'overdue'].includes(inv.status) && (
-                    <Button size="sm" className="h-7 text-xs gap-1 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20"
+                    <Button size="sm" className="h-7 text-xs gap-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 border border-emerald-500/20"
                       onClick={() => updateStatus(inv.id, 'paid', { paid_at: new Date().toISOString() })}>
                       <CheckCircle2 className="h-3 w-3" /> Mark paid
                     </Button>

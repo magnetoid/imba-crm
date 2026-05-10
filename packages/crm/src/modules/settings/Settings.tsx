@@ -64,7 +64,7 @@ function PollStatus({
   }
   if (lastError) {
     return (
-      <div className="text-xs text-red-400 border border-red-400/30 bg-red-500/5 rounded p-2.5 flex items-start gap-2">
+      <div className="text-xs text-red-700 border border-red-400/30 bg-red-50 rounded p-2.5 flex items-start gap-2">
         <AlertCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
         <div>
           <div className="font-medium">{label} poll failed{lastErrorAt ? ` (${timeAgo(lastErrorAt)})` : ''}</div>
@@ -75,7 +75,7 @@ function PollStatus({
   }
   if (lastSuccessAt) {
     return (
-      <div className="text-xs text-emerald-400 border border-emerald-400/30 bg-emerald-500/5 rounded p-2.5 flex items-center gap-2">
+      <div className="text-xs text-emerald-700 border border-emerald-400/30 bg-emerald-50 rounded p-2.5 flex items-center gap-2">
         <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0" />
         <span>{label} polling OK — last success {timeAgo(lastSuccessAt)}</span>
       </div>
@@ -491,7 +491,7 @@ export default function AISettings() {
           <Label className="font-normal">Use SSL/TLS (port 465)</Label>
         </div>
         {smtpTestResult && (
-          <div className={`flex items-center gap-2 text-sm p-3 rounded mb-4 ${smtpTestResult.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+          <div className={`flex items-center gap-2 text-sm p-3 rounded mb-4 ${smtpTestResult.ok ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
             {smtpTestResult.ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
             {smtpTestResult.message}
           </div>
@@ -548,7 +548,7 @@ export default function AISettings() {
         />
 
         {imapTestResult && (
-          <div className={`mt-3 flex items-center gap-2 text-sm p-3 rounded ${imapTestResult.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+          <div className={`mt-3 flex items-center gap-2 text-sm p-3 rounded ${imapTestResult.ok ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
             {imapTestResult.ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
             {imapTestResult.message}
           </div>
@@ -609,7 +609,7 @@ export default function AISettings() {
         />
 
         {pop3TestResult && (
-          <div className={`mt-3 flex items-center gap-2 text-sm p-3 rounded ${pop3TestResult.ok ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+          <div className={`mt-3 flex items-center gap-2 text-sm p-3 rounded ${pop3TestResult.ok ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
             {pop3TestResult.ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
             {pop3TestResult.message}
           </div>

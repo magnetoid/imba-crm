@@ -75,9 +75,9 @@ function Check({ pass, label, detail }: { pass: boolean | undefined; label: stri
   return (
     <div className="flex items-start gap-2 py-1.5">
       {pass ? (
-        <CheckCircle className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />
+        <CheckCircle className="h-3.5 w-3.5 text-emerald-700 flex-shrink-0 mt-0.5" />
       ) : pass === false ? (
-        <XCircle className="h-3.5 w-3.5 text-red-400 flex-shrink-0 mt-0.5" />
+        <XCircle className="h-3.5 w-3.5 text-red-700 flex-shrink-0 mt-0.5" />
       ) : (
         <AlertTriangle className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0 mt-0.5" />
       )}
@@ -93,10 +93,10 @@ function Check({ pass, label, detail }: { pass: boolean | undefined; label: stri
 
 function TechBadge({ label, category }: { label: string; category: string }) {
   const colors: Record<string, string> = {
-    cms: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+    cms: 'bg-blue-100 text-blue-700 border-blue-500/20',
     framework: 'bg-violet-500/10 text-violet-400 border-violet-500/20',
-    analytics: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-    ads: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+    analytics: 'bg-emerald-100 text-emerald-700 border-emerald-500/20',
+    ads: 'bg-amber-100 text-amber-700 border-amber-500/20',
     email: 'bg-pink-500/10 text-pink-400 border-pink-500/20',
     cdn: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
     hosting: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
@@ -320,7 +320,7 @@ export default function AnalysisReport() {
         {/* Tech Stack */}
         <div className="bg-card border border-border rounded-xl p-5">
           <div className="flex items-center gap-2 mb-4">
-            <Server className="h-4 w-4 text-blue-400" />
+            <Server className="h-4 w-4 text-blue-700" />
             <h2 className="text-sm font-semibold">Tech Stack</h2>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -343,7 +343,7 @@ export default function AnalysisReport() {
         <div className="bg-card border border-border rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <Search className="h-4 w-4 text-amber-400" />
+              <Search className="h-4 w-4 text-amber-700" />
               <h2 className="text-sm font-semibold">SEO Checklist</h2>
             </div>
             <span className={`text-xs font-mono font-bold ${scoreColor(a.score_seo)}`}>{a.score_seo}/100</span>
@@ -363,7 +363,7 @@ export default function AnalysisReport() {
             <div className="mt-3 pt-3 border-t border-border">
               <p className="text-xs font-mono text-muted-foreground mb-2">Issues</p>
               {seo.issues!.map((issue, i) => (
-                <p key={i} className="text-xs text-red-400/80 flex items-start gap-1.5 mb-1">
+                <p key={i} className="text-xs text-red-700/80 flex items-start gap-1.5 mb-1">
                   <AlertTriangle className="h-3 w-3 flex-shrink-0 mt-0.5" />{issue}
                 </p>
               ))}
@@ -392,7 +392,7 @@ export default function AnalysisReport() {
               <div key={label} className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">{label}</span>
                 {value !== undefined && value !== null ? (
-                  <span className={`text-xs font-mono font-medium ${good(value) ? 'text-emerald-400' : ok(value) ? 'text-amber-400' : 'text-red-400'}`}>
+                  <span className={`text-xs font-mono font-medium ${good(value) ? 'text-emerald-700' : ok(value) ? 'text-amber-700' : 'text-red-700'}`}>
                     {typeof value === 'number' && value % 1 !== 0 ? value.toFixed(2) : value}{suffix}
                   </span>
                 ) : (
@@ -417,7 +417,7 @@ export default function AnalysisReport() {
         <div className="bg-card border border-border rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <Layout className="h-4 w-4 text-emerald-400" />
+              <Layout className="h-4 w-4 text-emerald-700" />
               <h2 className="text-sm font-semibold">Content Audit</h2>
             </div>
             <span className={`text-xs font-mono font-bold ${scoreColor(a.score_content)}`}>{a.score_content}/100</span>
@@ -432,8 +432,8 @@ export default function AnalysisReport() {
                 <p className="text-lg font-bold font-mono">{content.avg_word_count ?? '—'}</p>
                 <p className="text-[0.6rem] text-muted-foreground">Avg Words</p>
               </div>
-              <div className={`text-center p-2 rounded-lg ${(content.video_count ?? 0) === 0 ? 'bg-red-500/10' : 'bg-emerald-500/10'}`}>
-                <p className={`text-lg font-bold font-mono ${(content.video_count ?? 0) === 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+              <div className={`text-center p-2 rounded-lg ${(content.video_count ?? 0) === 0 ? 'bg-red-100' : 'bg-emerald-100'}`}>
+                <p className={`text-lg font-bold font-mono ${(content.video_count ?? 0) === 0 ? 'text-red-700' : 'text-emerald-700'}`}>
                   {content.video_count ?? 0}
                 </p>
                 <p className="text-[0.6rem] text-muted-foreground">Videos</p>
@@ -502,8 +502,8 @@ export default function AnalysisReport() {
             <div>
               <p className="text-xs font-mono text-muted-foreground mb-2">Features</p>
               <div className="flex flex-wrap gap-1">
-                {visual.responsive && <Badge variant="outline" className="text-[0.6rem] text-emerald-400 border-emerald-500/20">Responsive</Badge>}
-                {visual.dark_mode && <Badge variant="outline" className="text-[0.6rem] text-purple-400 border-purple-500/20">Dark Mode</Badge>}
+                {visual.responsive && <Badge variant="outline" className="text-[0.6rem] text-emerald-700 border-emerald-500/20">Responsive</Badge>}
+                {visual.dark_mode && <Badge variant="outline" className="text-[0.6rem] text-violet-700 border-purple-500/20">Dark Mode</Badge>}
                 {visual.animations && <Badge variant="outline" className="text-[0.6rem] text-cyan-400 border-cyan-500/20">Animated</Badge>}
               </div>
             </div>

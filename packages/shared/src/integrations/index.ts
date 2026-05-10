@@ -16,5 +16,8 @@ export type { BrowserbaseSession } from './browserbase'
 export { findSlots, bookingUrl } from './cal'
 export type { CalSlot } from './cal'
 
+export { parseLoomUrl, buildLoomEmailHtml } from './loom'
+export type { LoomEmbed } from './loom'
+
 export { IntegrationError } from './_creds'
 export type { ProviderCredential } from './_creds'

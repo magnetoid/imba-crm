@@ -25,9 +25,9 @@ interface Template {
 }
 
 const TYPE_META: Record<string, { label: string; icon: typeof Mail; color: string }> = {
-  email:     { label: 'Email',     icon: Mail,     color: 'text-blue-400' },
-  proposal:  { label: 'Proposal',  icon: FileText, color: 'text-amber-400' },
-  follow_up: { label: 'Follow-up', icon: FileCode, color: 'text-emerald-400' },
+  email:     { label: 'Email',     icon: Mail,     color: 'text-blue-700' },
+  proposal:  { label: 'Proposal',  icon: FileText, color: 'text-amber-700' },
+  follow_up: { label: 'Follow-up', icon: FileCode, color: 'text-emerald-700' },
 }
 
 const EMPTY: Omit<Template, 'id' | 'created_at' | 'use_count' | 'ai_generated'> = {
@@ -125,7 +125,7 @@ export default function Templates() {
       <div className="flex items-center gap-2 mb-6 flex-wrap">
         {['all', 'email', 'proposal', 'follow_up'].map(t => (
           <button key={t} onClick={() => setTypeFilter(t)}
-            className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${typeFilter === t ? 'bg-amber-500/15 text-amber-400' : 'text-muted-foreground hover:text-foreground'}`}>
+            className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${typeFilter === t ? 'bg-amber-100 text-amber-700' : 'text-muted-foreground hover:text-foreground'}`}>
             {t === 'all' ? `All (${templates.length})` : `${TYPE_META[t]?.label} (${templates.filter(x => x.type === t).length})`}
           </button>
         ))}
@@ -164,13 +164,13 @@ export default function Templates() {
                 {t.variables.length > 0 && (
                   <div className="flex gap-1 flex-wrap mb-3">
                     {t.variables.map(v => (
-                      <code key={v} className="text-[10px] px-1.5 py-0.5 bg-amber-500/10 text-amber-500 rounded font-mono">{v}</code>
+                      <code key={v} className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-500 rounded font-mono">{v}</code>
                     ))}
                   </div>
                 )}
                 <div className="flex items-center gap-1.5 pt-3 border-t border-border">
                   <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => copyTemplate(t)}>
-                    {copied === t.id ? <><Check className="h-3 w-3 text-emerald-400" />Copied</> : <><Copy className="h-3 w-3" />Copy</>}
+                    {copied === t.id ? <><Check className="h-3 w-3 text-emerald-700" />Copied</> : <><Copy className="h-3 w-3" />Copy</>}
                   </Button>
                   <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => setEditDialog(t)}>
                     <Pencil className="h-3 w-3" /> Edit

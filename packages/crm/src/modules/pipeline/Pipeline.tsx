@@ -37,6 +37,9 @@ export interface CRMLead {
   intent_score?: number
   engagement_score?: number
   last_scored_at?: string
+  deal_health?: 'green' | 'yellow' | 'red'
+  deal_health_reason?: string
+  stage_entered_at?: string
   last_contacted_at?: string
   next_follow_up?: string
   created_at: string
@@ -408,7 +411,7 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
                 : <><Import className="h-3.5 w-3.5 mr-1.5" />Import quotes</>}
             </Button>
             {importResult && (
-              <p className={`text-xs font-mono ${importResult.error ? 'text-red-400' : importResult.ok > 0 ? 'text-green-400' : 'text-muted-foreground'}`}>
+              <p className={`text-xs font-mono ${importResult.error ? 'text-red-700' : importResult.ok > 0 ? 'text-green-400' : 'text-muted-foreground'}`}>
                 {importResult.error
                   ? `⚠ ${importResult.error}`
                   : importResult.ok === 0 && importResult.skipped > 0
@@ -614,7 +617,7 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
                     <td className="px-4 py-3 text-muted-foreground">{lead.value ? `$${lead.value.toLocaleString()}` : '—'}</td>
                     <td className="px-4 py-3">
                       {lead.next_follow_up ? (
-                        <span className={`text-xs font-mono ${isOverdue ? 'text-red-400 font-semibold' : 'text-muted-foreground'}`}>
+                        <span className={`text-xs font-mono ${isOverdue ? 'text-red-700 font-semibold' : 'text-muted-foreground'}`}>
                           {isOverdue ? '⚠ ' : ''}{new Date(lead.next_follow_up).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
                         </span>
                       ) : '—'}
@@ -725,15 +728,26 @@ function LeadCard({
   isDragging?: boolean
 }) {
   const isOverdue = lead.next_follow_up && new Date(lead.next_follow_up) < new Date() && !['won', 'lost'].includes(lead.stage)
+  const healthColor = lead.deal_health === 'red'    ? '#ef4444'
+                    : lead.deal_health === 'yellow' ? '#f59e0b'
+                    : lead.deal_health === 'green'  ? '#22c55e'
+                    : null
 
   return (
     <div
-      className={`border border-border rounded-lg p-3 bg-card hover:border-primary/30 transition-all cursor-pointer group ${
+      className={`border border-border rounded-lg p-3 bg-card hover:border-primary/30 transition-all cursor-pointer group relative ${
         isDragging ? 'shadow-lg ring-2 ring-primary/30 rotate-1' : ''
       }`}
       onClick={onNavigate}
       style={{ borderLeft: `2px solid ${stageColor}` }}
     >
+      {healthColor && (
+        <div
+          className="absolute right-0 top-3 bottom-3 w-1 rounded-l"
+          style={{ background: healthColor, opacity: 0.85 }}
+          title={lead.deal_health_reason || `Deal health: ${lead.deal_health}`}
+        />
+      )}
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex items-start gap-1.5 min-w-0">
           {/* Drag handle */}

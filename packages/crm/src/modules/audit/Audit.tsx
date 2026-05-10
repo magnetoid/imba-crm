@@ -22,11 +22,11 @@ const FEATURES: Array<{ key: 'all' | AIFeature; label: string }> = [
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
   logged:   { label: 'Logged',   color: 'text-muted-foreground' },
-  draft:    { label: 'Draft',    color: 'text-blue-400' },
+  draft:    { label: 'Draft',    color: 'text-blue-700' },
   edited:   { label: 'Edited',   color: 'text-cyan-400' },
-  approved: { label: 'Approved', color: 'text-emerald-400' },
-  rejected: { label: 'Rejected', color: 'text-red-400' },
-  sent:     { label: 'Sent',     color: 'text-purple-400' },
+  approved: { label: 'Approved', color: 'text-emerald-700' },
+  rejected: { label: 'Rejected', color: 'text-red-700' },
+  sent:     { label: 'Sent',     color: 'text-violet-700' },
 }
 
 function formatCost(cents: number | null): string {
@@ -102,10 +102,10 @@ export default function AIAudit() {
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
         <Stat label="Total" value={totals.total.toString()} />
-        <Stat label="Approved / sent" value={totals.approved.toString()} color="text-emerald-400" />
-        <Stat label="Rejected" value={totals.rejected.toString()} color="text-red-400" />
-        <Stat label="Failed" value={totals.failed.toString()} color={totals.failed > 0 ? 'text-amber-400' : undefined} />
-        <Stat label="Cost (recent)" value={formatCost(totals.costCents)} color="text-purple-400" />
+        <Stat label="Approved / sent" value={totals.approved.toString()} color="text-emerald-700" />
+        <Stat label="Rejected" value={totals.rejected.toString()} color="text-red-700" />
+        <Stat label="Failed" value={totals.failed.toString()} color={totals.failed > 0 ? 'text-amber-700' : undefined} />
+        <Stat label="Cost (recent)" value={formatCost(totals.costCents)} color="text-violet-700" />
       </div>
 
       <div className="flex items-center gap-3 mb-4 flex-wrap">
@@ -160,9 +160,9 @@ export default function AIAudit() {
                 <div className="flex items-start justify-between gap-3 mb-1 flex-wrap">
                   <div className="flex items-center gap-2">
                     {hasError
-                      ? <AlertCircle className="h-3.5 w-3.5 text-red-400" />
+                      ? <AlertCircle className="h-3.5 w-3.5 text-red-700" />
                       : row.status === 'sent' || row.status === 'approved'
-                        ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                        ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" />
                         : <Clock className="h-3.5 w-3.5 text-muted-foreground" />}
                     <Badge variant="outline" className="text-xs">{row.feature}</Badge>
                     <Badge variant="outline" className="text-xs text-muted-foreground">{row.task_type}</Badge>
@@ -220,7 +220,7 @@ export default function AIAudit() {
 
               {selected.final_content && selected.final_content !== selected.output_text && (
                 <Section title="Final content (post-edit)">
-                  <pre className="text-xs text-emerald-300/80 whitespace-pre-wrap font-mono bg-emerald-500/5 border border-emerald-500/20 rounded p-3 max-h-64 overflow-y-auto">
+                  <pre className="text-xs text-emerald-300/80 whitespace-pre-wrap font-mono bg-emerald-50 border border-emerald-500/20 rounded p-3 max-h-64 overflow-y-auto">
                     {selected.final_content}
                   </pre>
                 </Section>
@@ -228,7 +228,7 @@ export default function AIAudit() {
 
               {selected.error_text && (
                 <Section title="Error">
-                  <pre className="text-xs text-red-300 whitespace-pre-wrap font-mono bg-red-500/5 border border-red-500/20 rounded p-3 max-h-64 overflow-y-auto">
+                  <pre className="text-xs text-red-300 whitespace-pre-wrap font-mono bg-red-50 border border-red-500/20 rounded p-3 max-h-64 overflow-y-auto">
                     {selected.error_text}
                   </pre>
                 </Section>

@@ -108,7 +108,7 @@ export default function AgentDetail() {
       <p className="text-xs text-muted-foreground mb-8 font-mono">{job.id}</p>
 
       {job.error && (
-        <div className="border border-red-400/30 bg-red-500/5 rounded p-3 text-sm text-red-300 mb-6">
+        <div className="border border-red-400/30 bg-red-50 rounded p-3 text-sm text-red-300 mb-6">
           {job.error}
         </div>
       )}
@@ -156,7 +156,7 @@ function RunCard({
 }) {
   const isAwaiting = run.status === 'awaiting_approval'
   return (
-    <div className={`border rounded-lg p-4 ${isAwaiting ? 'border-amber-500/40 bg-amber-500/5' : 'border-border'}`}>
+    <div className={`border rounded-lg p-4 ${isAwaiting ? 'border-amber-500/40 bg-amber-50' : 'border-border'}`}>
       <div className="flex items-center gap-2 mb-2">
         <span className="text-[0.6rem] font-mono text-muted-foreground/60">#{run.step_no}</span>
         <span className="font-medium text-sm">{run.step_name}</span>
@@ -202,7 +202,7 @@ function RunCard({
                 onClick={onStartEdit}>
                 <Pencil className="h-3 w-3" /> Edit & approve
               </Button>
-              <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5 border-red-500/30 text-red-300 hover:bg-red-500/10"
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5 border-red-500/30 text-red-300 hover:bg-red-100"
                 onClick={onReject}>
                 <XCircle className="h-3 w-3" /> Stop
               </Button>

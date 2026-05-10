@@ -23,6 +23,8 @@ interface LiveStats {
   avgScore: number
   stageBreakdown: { stage: string; count: number }[]
   forecast: { committed: number; weighted: number; pipeline: number }
+  health: { green: number; yellow: number; red: number }
+  attribution: { channel: string; touches: number; closed: number }[]
 }
 
 const STAGE_COLORS: Record<string, string> = {
@@ -53,18 +55,43 @@ export default function AIAnalytics() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [leadsRes, emailsRes, analyticsRes] = await Promise.all([
-      supabase.from('crm_leads').select('stage, ai_score, value, probability'),
+    const [leadsRes, emailsRes, analyticsRes, journeyRes] = await Promise.all([
+      supabase.from('crm_leads').select('id, stage, ai_score, value, probability, deal_health'),
       supabase.from('crm_outreach_emails').select('status'),
       supabase.from('crm_analytics_snapshots').select('ai_insights').order('snapshot_date', { ascending: false }).limit(1).maybeSingle(),
+      supabase.from('crm_deal_journey').select('lead_id, channel, kind').limit(2000),
     ])
 
     const leads = leadsRes.data || []
     const emails = emailsRes.data || []
+    const journey = (journeyRes.data || []) as Array<{ lead_id: string; channel: string; kind: string }>
     const stageMap: Record<string, number> = {}
     leads.forEach(l => { stageMap[l.stage] = (stageMap[l.stage] || 0) + 1 })
     const totalScore = leads.reduce((s, l) => s + (l.ai_score || 0), 0)
     const forecast = forecastRevenue(leads)
+
+    // Deal health distribution.
+    const health = { green: 0, yellow: 0, red: 0 }
+    leads.forEach(l => {
+      const h = (l as { deal_health?: string }).deal_health
+      if (h === 'red')         health.red++
+      else if (h === 'yellow') health.yellow++
+      else                     health.green++
+    })
+
+    // Multi-touch attribution: count touches per channel and how many of
+    // those touches sit on closed-won leads.
+    const wonIds = new Set(leads.filter(l => l.stage === 'won').map(l => l.id as string))
+    const attrMap: Record<string, { touches: number; closed: number }> = {}
+    for (const t of journey) {
+      const key = (t.channel || 'other').toLowerCase()
+      if (!attrMap[key]) attrMap[key] = { touches: 0, closed: 0 }
+      attrMap[key].touches++
+      if (wonIds.has(t.lead_id)) attrMap[key].closed++
+    }
+    const attribution = Object.entries(attrMap)
+      .map(([channel, v]) => ({ channel, ...v }))
+      .sort((a, b) => b.touches - a.touches)
 
     setStats({
       totalLeads: leads.length,
@@ -78,6 +105,8 @@ export default function AIAnalytics() {
       avgScore: leads.length > 0 ? Math.round(totalScore / leads.length) : 0,
       stageBreakdown: Object.entries(stageMap).map(([stage, count]) => ({ stage, count })),
       forecast,
+      health,
+      attribution,
     })
 
     if (analyticsRes.data?.ai_insights) {
@@ -138,14 +167,14 @@ Return ONLY a valid JSON array of 5 insight strings.`
     <div className="p-8 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-3">
-          <BarChart2 className="h-5 w-5 text-amber-500" />
-          <h1 className="text-2xl font-semibold">Analytics</h1>
+          <BarChart2 className="h-5 w-5 text-primary" />
+          <h1 className="text-2xl font-semibold tracking-tight">Analytics</h1>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={load} className="gap-2">
             <RefreshCw className="h-3.5 w-3.5" /> Refresh
           </Button>
-          <Button size="sm" className="gap-2 bg-amber-500 hover:bg-amber-600 text-black" onClick={generateInsights} disabled={generatingInsights}>
+          <Button size="sm" className="gap-2" onClick={generateInsights} disabled={generatingInsights}>
             {generatingInsights ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Brain className="h-3.5 w-3.5" />}
             AI Insights
           </Button>
@@ -158,46 +187,100 @@ Return ONLY a valid JSON array of 5 insight strings.`
       ) : stats ? (
         <>
           {/* KPI Grid */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-8">
             {[
-              { label: 'Total Leads',   value: stats.totalLeads,   icon: Users,       color: 'text-amber-400' },
-              { label: 'Avg AI Score',  value: `${stats.avgScore}`, icon: Target,      color: 'text-blue-400' },
-              { label: 'Emails Sent',   value: stats.sentEmails,   icon: Mail,        color: 'text-emerald-400' },
-              { label: 'Converted',     value: stats.convertedLeads, icon: TrendingUp, color: 'text-purple-400' },
+              { label: 'Total Leads',   value: stats.totalLeads,   icon: Users,      color: 'text-primary' },
+              { label: 'Avg AI Score',  value: `${stats.avgScore}`, icon: Target,     color: 'text-blue-600' },
+              { label: 'Emails Sent',   value: stats.sentEmails,   icon: Mail,       color: 'text-emerald-600' },
+              { label: 'Converted',     value: stats.convertedLeads, icon: TrendingUp, color: 'text-violet-600' },
             ].map(kpi => (
-              <div key={kpi.label} className="bg-card border border-border rounded-lg p-4">
+              <div key={kpi.label} className="bg-card border border-border rounded-lg p-4 shadow-sm">
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-xs text-muted-foreground">{kpi.label}</p>
                   <kpi.icon className={`h-4 w-4 ${kpi.color}`} />
                 </div>
-                <p className={`text-3xl font-mono font-bold ${kpi.color}`}>{kpi.value}</p>
+                <p className={`text-3xl font-mono font-bold tracking-tight text-foreground`}>{kpi.value}</p>
               </div>
             ))}
           </div>
 
-          {/* Revenue Forecast */}
-          <div className="bg-card border border-border rounded-lg p-5 mb-8">
-            <div className="flex items-center gap-2 mb-5">
-              <DollarSign className="h-4 w-4 text-emerald-400" />
-              <p className="text-sm font-medium">Revenue Forecast</p>
-              <span className="text-xs text-muted-foreground">— weighted by stage & probability</span>
+          {/* Deal-health distribution + multi-touch attribution */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <div className="bg-card border border-border rounded-lg p-5 shadow-sm">
+              <p className="text-sm font-medium mb-1">Deal health</p>
+              <p className="text-xs text-muted-foreground mb-4">Where your active deals sit. Red deals need a nudge today.</p>
+              {(() => {
+                const total = stats.health.green + stats.health.yellow + stats.health.red || 1
+                return (
+                  <>
+                    <div className="flex h-3 rounded-full overflow-hidden mb-4">
+                      <div style={{ width: `${(stats.health.green / total) * 100}%`,  background: '#22c55e' }} />
+                      <div style={{ width: `${(stats.health.yellow / total) * 100}%`, background: '#f59e0b' }} />
+                      <div style={{ width: `${(stats.health.red / total) * 100}%`,    background: '#ef4444' }} />
+                    </div>
+                    <div className="grid grid-cols-3 gap-3 text-center">
+                      <div><p className="text-xl font-mono font-bold text-emerald-600">{stats.health.green}</p><p className="text-xs text-muted-foreground">Green</p></div>
+                      <div><p className="text-xl font-mono font-bold text-amber-600">{stats.health.yellow}</p><p className="text-xs text-muted-foreground">Yellow</p></div>
+                      <div><p className="text-xl font-mono font-bold text-red-600">{stats.health.red}</p><p className="text-xs text-muted-foreground">Red</p></div>
+                    </div>
+                  </>
+                )
+              })()}
             </div>
-            <div className="grid grid-cols-3 gap-4">
-              <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <Wallet className="h-3.5 w-3.5 text-emerald-400" />
-                  <p className="text-xs text-muted-foreground">Committed (Won)</p>
+
+            <div className="bg-card border border-border rounded-lg p-5 shadow-sm">
+              <p className="text-sm font-medium mb-1">Channel attribution</p>
+              <p className="text-xs text-muted-foreground mb-4">Touches per channel, with the share that landed on a closed-won deal.</p>
+              {stats.attribution.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No journey data yet — run a sequence and let it cook.</p>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {(() => {
+                    const max = Math.max(1, ...stats.attribution.map(a => a.touches))
+                    return stats.attribution.slice(0, 8).map(a => {
+                      const wonPct = a.touches > 0 ? Math.round((a.closed / a.touches) * 100) : 0
+                      return (
+                        <div key={a.channel}>
+                          <div className="flex justify-between text-xs mb-1">
+                            <span className="capitalize text-foreground">{a.channel.replace(/_/g, ' ')}</span>
+                            <span className="font-mono text-muted-foreground">{a.touches} touches · {wonPct}% on won</span>
+                          </div>
+                          <div className="h-2 bg-muted rounded-full overflow-hidden relative">
+                            <div className="h-full bg-slate-300" style={{ width: `${(a.touches / max) * 100}%` }} />
+                            <div className="h-full bg-emerald-500 absolute top-0 left-0" style={{ width: `${(a.closed / max) * 100}%` }} />
+                          </div>
+                        </div>
+                      )
+                    })
+                  })()}
                 </div>
-                <p className="text-2xl font-mono font-bold text-emerald-400">${stats.forecast.committed.toLocaleString()}</p>
-              </div>
-              <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-4">
+              )}
+            </div>
+          </div>
+
+          {/* Revenue Forecast */}
+          <div className="bg-card border border-border rounded-lg p-5 mb-8 shadow-sm">
+            <div className="flex items-center gap-2 mb-5">
+              <DollarSign className="h-4 w-4 text-emerald-600" />
+              <p className="text-sm font-medium">Revenue Forecast</p>
+              <span className="text-xs text-muted-foreground">— weighted by stage &amp; probability</span>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-1.5">
-                  <PieChart className="h-3.5 w-3.5 text-amber-400" />
-                  <p className="text-xs text-muted-foreground">Weighted Forecast</p>
+                  <Wallet className="h-3.5 w-3.5 text-emerald-700" />
+                  <p className="text-xs text-emerald-900">Committed (Won)</p>
                 </div>
-                <p className="text-2xl font-mono font-bold text-amber-400">${stats.forecast.weighted.toLocaleString()}</p>
+                <p className="text-2xl font-mono font-bold text-emerald-700">${stats.forecast.committed.toLocaleString()}</p>
               </div>
-              <div className="bg-muted/20 border border-border rounded-lg p-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <PieChart className="h-3.5 w-3.5 text-amber-700" />
+                  <p className="text-xs text-amber-900">Weighted Forecast</p>
+                </div>
+                <p className="text-2xl font-mono font-bold text-amber-700">${stats.forecast.weighted.toLocaleString()}</p>
+              </div>
+              <div className="bg-muted/40 border border-border rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-1.5">
                   <TrendingUp className="h-3.5 w-3.5 text-muted-foreground" />
                   <p className="text-xs text-muted-foreground">Active Pipeline</p>
@@ -220,15 +303,15 @@ Return ONLY a valid JSON array of 5 insight strings.`
               <Separator className="mb-4" />
               <div className="flex gap-6">
                 <div className="text-center">
-                  <p className="text-2xl font-mono font-bold text-emerald-400">{openRate}%</p>
+                  <p className="text-2xl font-mono font-bold text-emerald-600">{openRate}%</p>
                   <p className="text-xs text-muted-foreground mt-0.5">Open rate</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-2xl font-mono font-bold text-purple-400">{replyRate}%</p>
+                  <p className="text-2xl font-mono font-bold text-violet-600">{replyRate}%</p>
                   <p className="text-xs text-muted-foreground mt-0.5">Reply rate</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-2xl font-mono font-bold text-amber-400">{convRate}%</p>
+                  <p className="text-2xl font-mono font-bold text-amber-600">{convRate}%</p>
                   <p className="text-xs text-muted-foreground mt-0.5">Conv. rate</p>
                 </div>
               </div>
@@ -250,9 +333,9 @@ Return ONLY a valid JSON array of 5 insight strings.`
           </div>
 
           {/* AI Insights */}
-          <div className="bg-card border border-border rounded-lg p-6">
+          <div className="bg-card border border-border rounded-lg p-6 shadow-sm">
             <div className="flex items-center gap-2 mb-5">
-              <Brain className="h-4 w-4 text-amber-500" />
+              <Brain className="h-4 w-4 text-primary" />
               <p className="text-sm font-medium">AI Sales Insights</p>
               {insights.length === 0 && (
                 <span className="text-xs text-muted-foreground ml-1">— click "AI Insights" to generate</span>
@@ -261,11 +344,11 @@ Return ONLY a valid JSON array of 5 insight strings.`
             {insights.length > 0 ? (
               <div className="flex flex-col gap-3">
                 {insights.map((insight, i) => (
-                  <div key={i} className="flex gap-3 p-3 bg-amber-500/5 border border-amber-500/10 rounded-lg">
-                    <div className="w-5 h-5 rounded-full bg-amber-500/15 flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <span className="text-[10px] font-mono font-bold text-amber-500">{i + 1}</span>
+                  <div key={i} className="flex gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <div className="w-5 h-5 rounded-full bg-amber-200 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <span className="text-[10px] font-mono font-bold text-amber-700">{i + 1}</span>
                     </div>
-                    <p className="text-sm text-muted-foreground leading-relaxed">{insight}</p>
+                    <p className="text-sm text-foreground leading-relaxed">{insight}</p>
                   </div>
                 ))}
               </div>

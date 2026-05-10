@@ -39,9 +39,9 @@ interface InboxMessage {
 interface CRMLead { id: string; name: string; company: string; email: string }
 
 const SENTIMENT_COLOR: Record<string, string> = {
-  positive: 'text-emerald-400 border-emerald-400/30',
+  positive: 'text-emerald-700 border-emerald-400/30',
   neutral:  'text-muted-foreground border-border',
-  negative: 'text-red-400 border-red-400/30',
+  negative: 'text-red-700 border-red-400/30',
 }
 const CATEGORY_ICON: Record<string, typeof Mail> = {
   question: MessageSquare, objection: AlertCircle, meeting_request: CheckCircle2, bounce: AlertCircle,
@@ -207,7 +207,7 @@ Return ONLY valid JSON: {"sentiment":"positive|neutral|negative","category":"que
               : messages.filter(m => m.status !== 'archived' && (f === 'unread' ? m.status === 'unread' : m.direction === f)).length
           return (
             <button key={f} onClick={() => setFilter(f)}
-              className={`px-3 py-1.5 rounded text-xs font-mono transition-colors ${filter === f ? 'bg-amber-500/15 text-amber-400' : 'text-muted-foreground hover:text-foreground'}`}>
+              className={`px-3 py-1.5 rounded text-xs font-mono transition-colors ${filter === f ? 'bg-amber-100 text-amber-700' : 'text-muted-foreground hover:text-foreground'}`}>
               {f.charAt(0).toUpperCase() + f.slice(1)} ({count})
             </button>
           )
@@ -232,11 +232,11 @@ Return ONLY valid JSON: {"sentiment":"positive|neutral|negative","category":"que
             const CatIcon = CATEGORY_ICON[msg.ai_category || ''] || Mail
             return (
               <button key={msg.id} onClick={() => { setSelected(msg); if (msg.status === 'unread' && !msg.ai_sentiment) { void getCRMRuntimeSettings().then(runtime => { if (runtime.ai_inbox_auto_categorize) void analyzeMessage(msg) }) } }}
-                className={`text-left p-4 bg-card border rounded-lg transition-all ${selected?.id === msg.id ? 'border-amber-500/40 bg-amber-500/5' : `border-border hover:border-border/60 ${msg.status === 'unread' ? 'border-l-2 border-l-amber-400' : ''}`}`}>
+                className={`text-left p-4 bg-card border rounded-lg transition-all ${selected?.id === msg.id ? 'border-amber-500/40 bg-amber-50' : `border-border hover:border-border/60 ${msg.status === 'unread' ? 'border-l-2 border-l-amber-400' : ''}`}`}>
                 <div className="flex items-center gap-2 mb-1.5">
                   {msg.direction === 'inbound'
-                    ? <ArrowDownLeft className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0" />
-                    : <ArrowUpRight className="h-3.5 w-3.5 text-blue-400 flex-shrink-0" />}
+                    ? <ArrowDownLeft className="h-3.5 w-3.5 text-emerald-700 flex-shrink-0" />
+                    : <ArrowUpRight className="h-3.5 w-3.5 text-blue-700 flex-shrink-0" />}
                   <span className="text-sm font-medium truncate">{msg.crm_leads?.name || msg.from_email || 'Unknown'}</span>
                   {msg.status === 'unread' && <div className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />}
                   <div className="flex-1" />
@@ -298,14 +298,14 @@ Return ONLY valid JSON: {"sentiment":"positive|neutral|negative","category":"que
               )}
 
               {selected.ai_suggested_reply && (
-                <div className="border border-amber-500/20 bg-amber-500/5 rounded-lg p-4">
+                <div className="border border-amber-500/20 bg-amber-50 rounded-lg p-4">
                   <div className="flex items-center gap-2 mb-2">
                     <Sparkles className="h-3.5 w-3.5 text-amber-500" />
                     <span className="text-xs font-mono text-amber-500/70 tracking-widest uppercase">AI suggested reply</span>
                   </div>
                   <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-wrap">{selected.ai_suggested_reply}</p>
                   <div className="flex gap-2 mt-3 flex-wrap">
-                    <Button size="sm" className="h-7 text-xs gap-1.5 bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 border border-amber-500/20"
+                    <Button size="sm" className="h-7 text-xs gap-1.5 bg-amber-100 text-amber-700 hover:bg-amber-500/25 border border-amber-500/20"
                       onClick={() => window.open(`mailto:${selected.from_email || ''}?subject=Re: ${encodeURIComponent(selected.subject || '')}&body=${encodeURIComponent(selected.ai_suggested_reply || '')}`)}>
                       <Reply className="h-3 w-3" /> Use in mail client
                     </Button>
