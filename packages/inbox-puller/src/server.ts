@@ -24,6 +24,8 @@ import { supabase } from './supabase.js'
 import { mountWidgetApi } from './widget-api.js'
 import { mountCalWebhook } from './webhooks/cal.js'
 import { mountRecordingWebhook } from './webhooks/recording.js'
+import { mountAiProxy } from './ai-proxy.js'
+import { mountNomoApi } from './nomo.js'
 
 const PORT = parseInt(process.env.WORKER_HTTP_PORT || '3030', 10)
 const JWT_SECRET = process.env.JWT_SECRET || ''
@@ -109,6 +111,14 @@ export function startHttpServer() {
   // Recording-platform webhook (Daily/Whereby/Cal/etc) → fires the
   // call-analyzer agent automatically.
   mountRecordingWebhook(app)
+
+  // /api/ai/route — server-side proxy for the SPA's callAI() helper.
+  // The shared model-router service was never deployed, so we serve
+  // the same shape inline using the same provider keys.
+  mountAiProxy(app)
+
+  // /api/nomo/* — Nomo copilot (Phase 8). SSE chat + thread CRUD.
+  mountNomoApi(app)
 
   // ── Open-pixel ────────────────────────────────────────────────────────
   app.get('/track/pixel/:idgif', async c => {
