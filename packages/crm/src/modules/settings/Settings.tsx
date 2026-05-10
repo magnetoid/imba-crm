@@ -26,16 +26,42 @@ const providerMeta: Array<{
   { provider: 'openrouter', label: 'OpenRouter', modelKey: 'openrouter_model', modelsKey: 'openrouter_models', secretKey: 'openrouter_api_key', placeholder: 'anthropic/claude-sonnet-4' },
 ]
 
-type SettingsTab = 'ai' | 'nomo' | 'smtp' | 'imap' | 'pop3' | 'caps' | 'company'
+type SettingsTab = 'ai' | 'nomo' | 'integrations' | 'smtp' | 'imap' | 'pop3' | 'caps' | 'company'
 
 const TABS: Array<{ id: SettingsTab; label: string; description: string }> = [
-  { id: 'ai',      label: 'AI providers',  description: 'Models, keys, routing and outreach tone' },
-  { id: 'nomo',    label: 'Nomo copilot',  description: 'Mode, autopilot allowlist, system prompt' },
-  { id: 'smtp',    label: 'Outbound mail', description: 'SMTP delivery for outreach + replies' },
-  { id: 'imap',    label: 'IMAP inbox',    description: 'Pull messages into the CRM via IMAP' },
-  { id: 'pop3',    label: 'POP3 inbox',    description: 'Alternative inbound mail polling' },
-  { id: 'caps',    label: 'Cost & limits', description: 'Monthly AI spend ceiling + cap action' },
-  { id: 'company', label: 'Company',       description: 'Brand context the AI uses in prompts' },
+  { id: 'ai',           label: 'AI providers',  description: 'Models, keys, routing and outreach tone' },
+  { id: 'nomo',         label: 'Nomo copilot',  description: 'Mode, autopilot allowlist, system prompt' },
+  { id: 'integrations', label: 'Integrations',  description: 'Apify, Hunter, Apollo, Browserbase, Cal, Loom…' },
+  { id: 'smtp',         label: 'Outbound mail', description: 'SMTP delivery for outreach + replies' },
+  { id: 'imap',         label: 'IMAP inbox',    description: 'Pull messages into the CRM via IMAP' },
+  { id: 'pop3',         label: 'POP3 inbox',    description: 'Alternative inbound mail polling' },
+  { id: 'caps',         label: 'Cost & limits', description: 'Monthly AI spend ceiling + cap action' },
+  { id: 'company',      label: 'Company',       description: 'Brand context the AI uses in prompts' },
+]
+
+// Non-LLM providers — keys live in crm_provider_credentials and are
+// consumed by the worker (lead-finder agent, Apify channel, contact-form
+// fill, Cal.com booking, Loom email embed, …). The existing saveAll
+// loop in this file picks up any secretValues entry whose key ends in
+// `_api_key`, strips that suffix, and POSTs to set_provider_credential.
+const INTEGRATION_PROVIDERS: Array<{
+  provider: string
+  label: string
+  hint: string
+  placeholder: string
+  docs?: string
+  needsCookie?: boolean   // LinkedIn stores a session cookie, not an API key
+}> = [
+  { provider: 'apify',       label: 'Apify',        hint: 'Lead-finder agent + LinkedIn DM channel. Get the token from apify.com → Settings → Integrations.', placeholder: 'apify_api_xxxxxxxxxxxxxxxx',    docs: 'https://apify.com/settings/integrations' },
+  { provider: 'hunter',      label: 'Hunter.io',    hint: 'Email finder + verifier. Used by lead-enricher.',                                                  placeholder: 'a1b2c3d4e5...',                docs: 'https://hunter.io/api-keys' },
+  { provider: 'apollo',      label: 'Apollo.io',    hint: 'Person enrichment (title, phone, seniority). Used by lead-enricher.',                              placeholder: 'aPoLLo_xxxxxxxxxxxx',          docs: 'https://app.apollo.io/#/settings/integrations/api' },
+  { provider: 'browserbase', label: 'Browserbase',  hint: 'Headless browser + Stagehand for contact-form fill / DOM extraction.',                             placeholder: 'bb_xxxxxxxxxxxxxxxx',          docs: 'https://browserbase.com/dashboard/settings' },
+  { provider: 'cal',         label: 'Cal.com',      hint: 'Booking link slot finder + calendar webhook. Personal access token from cal.com → Settings → Developer.', placeholder: 'cal_xxxxxxxxxxxxxxxx',  docs: 'https://app.cal.com/settings/developer/api-keys' },
+  { provider: 'loom',        label: 'Loom',         hint: 'Personalised video embed in outreach emails (optional — paste any token; we use it as an attribution flag).', placeholder: '(any string)' },
+  { provider: 'linkedin',    label: 'LinkedIn',     hint: 'LinkedIn session cookie (li_at) — used by the LinkedIn DM channel via Apify. NOT an OAuth token.',  placeholder: 'AQEDA...', needsCookie: true },
+  { provider: 'tavily',      label: 'Tavily',       hint: 'Real-time web search for AI agents (raw JSON). Optional — Perplexity covers most needs.',           placeholder: 'tvly-xxxxxxxxxxxx',           docs: 'https://app.tavily.com/' },
+  { provider: 'mailreach',   label: 'MailReach',    hint: 'Email warmup-as-a-service. Lifts inbox placement on cold outreach.',                                placeholder: 'mr_xxxxxxxxxxxx',             docs: 'https://app.mailreach.co/users/account' },
+  { provider: 'recording',   label: 'Recording webhook secret', hint: 'HMAC-SHA256 secret for /api/webhooks/recording. Set the same secret on Daily.co / Whereby / Cal.com when configuring the post-call webhook.', placeholder: '(any random 32+ chars)' },
 ]
 
 // Tools shown in the Nomo autopilot allowlist editor. Keep in sync with
@@ -594,6 +620,75 @@ export default function AISettings() {
           </section>
         )
       })()}
+
+      {activeTab === 'integrations' && (
+        <section className="mb-10">
+          <div className="flex items-center gap-2 mb-1">
+            <Zap className="h-4 w-4 text-primary" />
+            <h2 className="font-medium">Integrations</h2>
+          </div>
+          <p className="text-xs text-muted-foreground mb-5">
+            Keys for the worker-side integrations. Each one is consumed by a specific
+            agent or channel — only configure what you actually use.
+            All keys live in <code>crm_provider_credentials</code> and never round-trip to the browser.
+          </p>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-5">
+            {INTEGRATION_PROVIDERS.map(p => {
+              const secretKey = `${p.provider}_api_key`
+              const isSet = !!providerStatuses[p.provider]
+              const visible = !!visibleSecrets[secretKey]
+              const value = secretValues[secretKey] ?? ''
+              return (
+                <div key={p.provider} className="rounded-lg border border-border bg-card p-4">
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <p className="text-sm font-medium">{p.label}</p>
+                        {isSet
+                          ? <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">configured</span>
+                          : <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground border border-border">not set</span>}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">{p.hint}</p>
+                    </div>
+                    {p.docs && (
+                      <a href={p.docs} target="_blank" rel="noopener noreferrer"
+                         className="text-[11px] text-primary hover:underline flex-shrink-0">
+                        Get key ↗
+                      </a>
+                    )}
+                  </div>
+                  <div className="relative mt-2">
+                    <Input
+                      type={visible ? 'text' : 'password'}
+                      value={value}
+                      onChange={e => setSecretValues(prev => ({ ...prev, [secretKey]: e.target.value }))}
+                      className="pr-10 font-mono text-xs"
+                      placeholder={isSet ? '•••••••• (rotate by entering a new value)' : (p.needsCookie ? `Paste ${p.label} cookie` : `Paste ${p.label} key`)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setVisibleSecrets(prev => ({ ...prev, [secretKey]: !prev[secretKey] }))}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  {p.needsCookie && (
+                    <p className="text-[10px] text-amber-700 mt-1.5">
+                      ⚠ LinkedIn rotates session cookies aggressively. Re-paste if your DMs start failing.
+                    </p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          <Button onClick={() => void saveAll()} disabled={saving} className="gap-2">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save integration keys
+          </Button>
+        </section>
+      )}
 
       {activeTab === 'smtp' && <section className="mb-10">
         <div className="flex items-center gap-2 mb-1">
