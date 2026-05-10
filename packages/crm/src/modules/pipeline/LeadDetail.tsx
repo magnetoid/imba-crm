@@ -713,6 +713,13 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "recommendation"}`
             )}
           </div>
 
+          {/* MEDDPICC scoreboard — aggregates across all coach_notes */}
+          <MeddpiccScoreboard
+            activities={activities}
+            objections={(lead as { objections?: Array<{ slug: string; label: string; evidence: string; captured_at: string }> }).objections ?? []}
+            value={lead.value ?? null}
+          />
+
           {/* Call coach cards (one per analysed meeting) */}
           {activities.filter(a => a.coach_notes && a.coach_notes.summary).map(a => (
             <CallCoachCard key={a.id} activity={a} />
@@ -1078,6 +1085,137 @@ function CallCoachCard({ activity }: { activity: Activity }) {
               · transcript {activity.transcript_text.length.toLocaleString()} chars
             </span>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── MEDDPICC scoreboard ────────────────────────────────────────────────
+// Aggregates everything we know about the deal's qualification state.
+// Sources:
+//   - latest non-empty value of each MEDDPICC field across all coach_notes
+//   - objection count (preempt risk)
+//   - last sentiment + momentum score from the most recent coach_notes
+//   - deal value
+//
+// Per-field completeness: green ✓ if filled, slate dash if missing.
+// Overall completion %: 8 fields, X/8 filled.
+
+const MEDDPICC_FIELDS: Array<{ key: keyof CoachNotes['meddpicc']; label: string; hint: string }> = [
+  { key: 'metrics',          label: 'Metrics',          hint: 'Quantified pain or upside (e.g. "saves 12h/week per rep")' },
+  { key: 'economic_buyer',   label: 'Economic buyer',   hint: 'Person with budget authority — name + title' },
+  { key: 'decision_criteria',label: 'Decision criteria', hint: 'What they\'re actually evaluating against' },
+  { key: 'decision_process', label: 'Decision process', hint: 'How (and how fast) a decision gets made' },
+  { key: 'paper_process',    label: 'Paper process',    hint: 'Legal / procurement / IT review steps' },
+  { key: 'identify_pain',    label: 'Identify pain',    hint: 'Concrete pain points the prospect named' },
+  { key: 'champion',         label: 'Champion',         hint: 'Internal advocate who sells for you' },
+  { key: 'competition',      label: 'Competition',      hint: 'Who else they\'re looking at (incl. do-nothing)' },
+]
+
+function MeddpiccScoreboard({ activities, objections, value }: {
+  activities: Activity[]
+  objections: Array<{ slug: string; label: string; evidence: string; captured_at: string }>
+  value: number | null
+}) {
+  // Most-recent-first iteration so the *latest* non-empty value wins.
+  const sortedCoachNotes = activities
+    .filter(a => a.coach_notes)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .map(a => a.coach_notes!) as CoachNotes[]
+
+  if (sortedCoachNotes.length === 0 && objections.length === 0) return null
+
+  const aggregated: Partial<Record<keyof CoachNotes['meddpicc'], string>> = {}
+  for (const notes of sortedCoachNotes) {
+    for (const f of MEDDPICC_FIELDS) {
+      if (!aggregated[f.key]) {
+        const v = (notes.meddpicc ?? {})[f.key]
+        if (v && String(v).trim()) aggregated[f.key] = String(v)
+      }
+    }
+  }
+  const filled = MEDDPICC_FIELDS.filter(f => aggregated[f.key]).length
+  const total = MEDDPICC_FIELDS.length
+  const completionPct = Math.round((filled / total) * 100)
+  const completionColor = completionPct >= 75 ? '#22c55e' : completionPct >= 50 ? '#f59e0b' : '#ef4444'
+
+  const latestSentiment = sortedCoachNotes[0]?.sentiment
+  const latestScore     = sortedCoachNotes[0]?.score
+
+  return (
+    <div className="border border-border rounded-lg p-5 bg-card shadow-sm">
+      <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+        <div>
+          <h3 className="text-sm font-medium text-foreground">Deal qualification (MEDDPICC)</h3>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            Aggregated across {sortedCoachNotes.length} call coach card{sortedCoachNotes.length === 1 ? '' : 's'} · {objections.length} tracked objection{objections.length === 1 ? '' : 's'}
+            {value != null && ` · deal value $${value.toLocaleString()}`}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          {latestSentiment && (
+            <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full border capitalize ${
+              latestSentiment === 'positive' ? 'border-emerald-300 bg-emerald-50 text-emerald-700' :
+              latestSentiment === 'negative' ? 'border-red-300 bg-red-50 text-red-700' :
+                                                'border-slate-300 bg-slate-50 text-slate-700'
+            }`}>{latestSentiment}</span>
+          )}
+          {latestScore != null && (
+            <div className="flex items-center gap-1 text-xs">
+              <div className="w-2 h-2 rounded-full" style={{ background: latestScore >= 70 ? '#22c55e' : latestScore >= 40 ? '#f59e0b' : '#ef4444' }} />
+              <span className="font-mono font-bold">{latestScore}</span>
+            </div>
+          )}
+          <div className="flex items-center gap-1 text-xs">
+            <span className="font-mono font-bold tabular-nums" style={{ color: completionColor }}>{filled}/{total}</span>
+            <span className="text-muted-foreground">{completionPct}%</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="h-1.5 bg-muted rounded-full overflow-hidden mb-4">
+        <div className="h-full transition-all duration-700" style={{ width: `${completionPct}%`, background: completionColor }} />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {MEDDPICC_FIELDS.map(f => {
+          const v = aggregated[f.key]
+          return (
+            <div key={f.key as string} className={`rounded border px-3 py-2 ${v ? 'border-border bg-background' : 'border-dashed border-border bg-muted/30'}`}>
+              <div className="flex items-center justify-between gap-2 mb-0.5">
+                <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">{f.label}</p>
+                {v
+                  ? <Check className="h-3 w-3 text-emerald-600 flex-shrink-0" />
+                  : <span className="text-[10px] text-muted-foreground/60">missing</span>}
+              </div>
+              <p className={`text-xs leading-relaxed ${v ? 'text-foreground' : 'text-muted-foreground/60 italic'}`}>
+                {v || f.hint}
+              </p>
+            </div>
+          )
+        })}
+      </div>
+
+      {objections.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-border">
+          <p className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
+            Open objections
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {Array.from(new Set(objections.map(o => o.slug))).slice(0, 12).map(slug => {
+              const count = objections.filter(o => o.slug === slug).length
+              const sample = objections.find(o => o.slug === slug)
+              return (
+                <span key={slug}
+                  title={sample?.evidence ?? slug}
+                  className="text-[11px] font-mono px-2 py-0.5 rounded-full border border-amber-200 bg-amber-50 text-amber-900"
+                >
+                  {slug}{count > 1 ? ` ×${count}` : ''}
+                </span>
+              )
+            })}
+          </div>
         </div>
       )}
     </div>
