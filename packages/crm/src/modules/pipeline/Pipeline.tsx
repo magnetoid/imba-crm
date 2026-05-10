@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '@imba/shared/supabase'
 import { buildCompanyContext, callAIJSON, getCRMRuntimeSettings } from '@imba/shared/lib/ai'
@@ -44,10 +44,18 @@ export interface CRMLead {
   exit_checklist?: Record<string, boolean>
   last_contacted_at?: string
   next_follow_up?: string
+  tags?: string[]
   created_at: string
   updated_at: string
   /** Populated client-side from crm_lead_sequences. Not on the DB row. */
   active_sequence?: { id: string; name: string; current_step: number; total_steps: number; next_due_at: string }
+}
+
+interface SavedView {
+  id: string
+  name: string
+  filter: { stages?: string[]; tags?: string[]; fit_min?: number; intent_min?: number; search?: string; health?: ('red'|'yellow'|'green')[] }
+  pinned: boolean
 }
 
 // Composite "next-best-action" score used to rank leads inside a stage.
@@ -89,6 +97,12 @@ export default function CRMDashboard() {
   const [view, setView] = useState<'kanban' | 'list'>('kanban')
   const [search, setSearch] = useState('')
   const [stageFilter, setStageFilter] = useState<string | null>(null)
+  const [healthFilter, setHealthFilter] = useState<'red'|'yellow'|'green'|null>(null)
+  const [tagFilter, setTagFilter] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [savedViews, setSavedViews] = useState<SavedView[]>([])
+  const [activeViewId, setActiveViewId] = useState<string | null>(null)
+  const [bulkActing, setBulkActing] = useState(false)
     const [scoringId, setScoringId] = useState<string | null>(null)
   const [bulkScoring, setBulkScoring] = useState(false)
   const [importingQuotes, setImportingQuotes] = useState(false)
@@ -130,6 +144,134 @@ export default function CRMDashboard() {
   }, [])
 
   useEffect(() => { loadLeads() }, [loadLeads])
+
+  // ── Saved views ──────────────────────────────────────────────────
+  const loadSavedViews = useCallback(async () => {
+    const { data } = await supabase
+      .from('crm_saved_views').select('id, name, filter, pinned')
+      .order('pinned', { ascending: false }).order('name')
+    setSavedViews((data as SavedView[] | null) ?? [])
+  }, [])
+  useEffect(() => { void loadSavedViews() }, [loadSavedViews])
+
+  function applyView(v: SavedView) {
+    setActiveViewId(v.id)
+    setStageFilter(v.filter.stages?.[0] ?? null)
+    setSearch(v.filter.search ?? '')
+    setTagFilter(v.filter.tags?.[0] ?? null)
+    setHealthFilter(v.filter.health?.[0] ?? null)
+  }
+  function clearView() {
+    setActiveViewId(null)
+    setStageFilter(null); setSearch(''); setTagFilter(null); setHealthFilter(null)
+  }
+  async function saveCurrentAsView() {
+    const name = window.prompt('Name this view (e.g. "Q1 hot SaaS")')?.trim()
+    if (!name) return
+    const filter: SavedView['filter'] = {
+      ...(stageFilter ? { stages: [stageFilter] } : {}),
+      ...(search ? { search } : {}),
+      ...(tagFilter ? { tags: [tagFilter] } : {}),
+      ...(healthFilter ? { health: [healthFilter] } : {}),
+    }
+    const userRes = await supabase.auth.getUser()
+    const { data, error } = await supabase.from('crm_saved_views').insert({
+      user_id: userRes.data.user?.id ?? null, name, filter, pinned: true,
+    }).select('id, name, filter, pinned').maybeSingle()
+    if (error) { toast.error(error.message); return }
+    if (data) {
+      const v = data as SavedView
+      setSavedViews(prev => [v, ...prev])
+      setActiveViewId(v.id)
+      toast.success(`Saved view "${v.name}"`)
+    }
+  }
+  async function deleteView(id: string) {
+    if (!window.confirm('Delete this saved view?')) return
+    await supabase.from('crm_saved_views').delete().eq('id', id)
+    setSavedViews(prev => prev.filter(v => v.id !== id))
+    if (activeViewId === id) clearView()
+  }
+
+  // ── Bulk actions ─────────────────────────────────────────────────
+  function toggleSelect(id: string, ev: React.MouseEvent) {
+    if (ev.metaKey || ev.ctrlKey || ev.shiftKey) {
+      ev.preventDefault(); ev.stopPropagation()
+      setSelectedIds(prev => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id); else next.add(id)
+        return next
+      })
+      return true   // signal to caller to suppress navigation
+    }
+    return false
+  }
+  function clearSelection() { setSelectedIds(new Set()) }
+  async function bulkSetStage(stage: string) {
+    if (selectedIds.size === 0) return
+    setBulkActing(true)
+    let ok = 0, blocked = 0
+    for (const id of selectedIds) {
+      const { data } = await supabase.rpc('move_lead_stage', { p_lead_id: id, p_to_stage: stage })
+      const r = data as { ok: boolean } | null
+      if (r?.ok) ok++; else blocked++
+    }
+    setBulkActing(false)
+    toast.success(`Stage move: ${ok} ok${blocked ? `, ${blocked} blocked by exit-criteria` : ''}`)
+    clearSelection(); loadLeads()
+  }
+  async function bulkAssignSequence(sequenceId: string) {
+    if (selectedIds.size === 0) return
+    setBulkActing(true)
+    for (const id of selectedIds) {
+      await supabase.from('crm_lead_sequences').update({
+        status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_reason: 'bulk_replaced',
+      }).eq('lead_id', id).in('status', ['active', 'paused'])
+      await supabase.from('crm_lead_sequences').insert({ lead_id: id, sequence_id: sequenceId, next_due_at: new Date().toISOString() })
+    }
+    setBulkActing(false)
+    toast.success(`Started sequence on ${selectedIds.size} leads`)
+    clearSelection(); loadLeads()
+  }
+  async function bulkAddTag(tag: string) {
+    if (!tag.trim() || selectedIds.size === 0) return
+    setBulkActing(true)
+    for (const id of selectedIds) {
+      const lead = leads.find(l => l.id === id)
+      const cur  = lead?.tags ?? []
+      if (cur.includes(tag)) continue
+      await supabase.from('crm_leads').update({ tags: [...cur, tag] }).eq('id', id)
+    }
+    setBulkActing(false)
+    toast.success(`Tagged "${tag}" on ${selectedIds.size} leads`)
+    clearSelection(); loadLeads()
+  }
+  async function bulkSnooze(days: number) {
+    if (selectedIds.size === 0) return
+    setBulkActing(true)
+    const next = new Date(Date.now() + days * 86400_000).toISOString()
+    for (const id of selectedIds) {
+      await supabase.from('crm_leads').update({ next_follow_up: next }).eq('id', id)
+    }
+    setBulkActing(false)
+    toast.success(`Snoozed ${selectedIds.size} leads ${days}d`)
+    clearSelection(); loadLeads()
+  }
+  async function bulkDelete() {
+    if (selectedIds.size === 0) return
+    if (!window.confirm(`Delete ${selectedIds.size} leads? This is permanent.`)) return
+    setBulkActing(true)
+    await supabase.from('crm_leads').delete().in('id', Array.from(selectedIds))
+    setBulkActing(false)
+    toast.success(`Deleted ${selectedIds.size} leads`)
+    clearSelection(); loadLeads()
+  }
+
+  const allTags = useMemo(() => {
+    const s = new Set<string>()
+    for (const l of leads) for (const t of (l.tags ?? [])) s.add(t)
+    return Array.from(s).sort()
+  }, [leads])
 
   // ── Overdue follow-up browser notifications ─────────────
   useEffect(() => {
@@ -404,8 +546,10 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
     const matchesSearch = !search || l.name.toLowerCase().includes(search.toLowerCase()) ||
       l.company?.toLowerCase().includes(search.toLowerCase()) ||
       l.email?.toLowerCase().includes(search.toLowerCase())
-    const matchesStage = !stageFilter || l.stage === stageFilter
-    return matchesSearch && matchesStage
+    const matchesStage  = !stageFilter || l.stage === stageFilter
+    const matchesTag    = !tagFilter   || (l.tags ?? []).includes(tagFilter)
+    const matchesHealth = !healthFilter || l.deal_health === healthFilter
+    return matchesSearch && matchesStage && matchesTag && matchesHealth
   })
 
   // Pipeline stats
@@ -495,11 +639,42 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
         ))}
       </div>
 
+      {/* Saved views */}
+      {(savedViews.length > 0 || activeViewId) && (
+        <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+          <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mr-1">Views:</span>
+          {savedViews.map(v => (
+            <button
+              key={v.id}
+              onClick={() => activeViewId === v.id ? clearView() : applyView(v)}
+              className={`text-xs px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1 ${
+                activeViewId === v.id
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'border-border text-muted-foreground hover:border-muted-foreground'
+              }`}
+            >
+              {v.name}
+              {activeViewId === v.id && (
+                <span
+                  onClick={e => { e.stopPropagation(); void deleteView(v.id) }}
+                  className="ml-1 opacity-70 hover:opacity-100"
+                >×</span>
+              )}
+            </button>
+          ))}
+          {(stageFilter || search || tagFilter || healthFilter) && !activeViewId && (
+            <button onClick={saveCurrentAsView} className="text-xs px-2.5 py-1 rounded-full border border-dashed border-primary text-primary hover:bg-primary/5">
+              + Save as view
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Controls */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <Input
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={e => { setSearch(e.target.value); setActiveViewId(null) }}
           placeholder="Search leads…"
           className="max-w-xs"
         />
@@ -510,6 +685,38 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
               {v === 'kanban' ? 'Board' : 'List'}
             </button>
           ))}
+        </div>
+        {/* Health + tag pills */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {(['red','yellow','green'] as const).map(h => {
+            const active = healthFilter === h
+            const colors = { red: 'bg-red-500', yellow: 'bg-amber-500', green: 'bg-emerald-500' }
+            return (
+              <button
+                key={h}
+                onClick={() => { setHealthFilter(active ? null : h); setActiveViewId(null) }}
+                className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                  active ? 'border-foreground' : 'border-border text-muted-foreground hover:border-muted-foreground'
+                }`}
+                title={`Filter to ${h} deal health`}
+              >
+                <span className={`w-2 h-2 rounded-full ${colors[h]}`} />
+                {h}
+              </button>
+            )
+          })}
+          {allTags.slice(0, 8).map(t => {
+            const active = tagFilter === t
+            return (
+              <button
+                key={t}
+                onClick={() => { setTagFilter(active ? null : t); setActiveViewId(null) }}
+                className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                  active ? 'bg-foreground text-background border-foreground' : 'border-border text-muted-foreground hover:border-muted-foreground'
+                }`}
+              >#{t}</button>
+            )
+          })}
         </div>
       </div>
 
@@ -591,13 +798,19 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
                                     stageColor={stage.color}
                                     stageIndex={STAGES.findIndex(s => s.key === stage.key)}
                                     totalStages={STAGES.length}
-                                    onNavigate={() => navigate(`/admin/crm/${lead.id}`)}
+                                    onNavigate={(ev) => {
+                                      // Cmd/Ctrl/Shift-click → toggle selection,
+                                      // plain click → navigate.
+                                      if (toggleSelect(lead.id, ev)) return
+                                      navigate(`/admin/crm/${lead.id}`)
+                                    }}
                                     onScore={() => scoreWithAI(lead)}
                                     onMoveForward={() => quickMoveStage(lead, 'forward')}
                                     onMoveBack={() => quickMoveStage(lead, 'back')}
                                     scoring={scoringId === lead.id}
                                     dragHandleProps={dragProvided.dragHandleProps}
                                     isDragging={dragSnapshot.isDragging}
+                                    selected={selectedIds.has(lead.id)}
                                   />
                                 </div>
                               )}
@@ -690,6 +903,56 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
         </div>
       )}
 
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 bg-card border border-border rounded-full shadow-lg pl-4 pr-2 py-2 flex items-center gap-2 max-w-[95vw] flex-wrap">
+          <span className="text-sm font-medium">
+            {selectedIds.size} selected
+          </span>
+          <span className="h-5 w-px bg-border mx-1" />
+          {/* Move stage */}
+          <Select onValueChange={(v) => void bulkSetStage(v)}>
+            <SelectTrigger className="h-8 text-xs gap-1 w-auto px-3 border-0 bg-muted hover:bg-muted/80">
+              <SelectValue placeholder="Move stage" />
+            </SelectTrigger>
+            <SelectContent>
+              {STAGES.map(s => <SelectItem key={s.key} value={s.key}>{s.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          {/* Snooze */}
+          <Select onValueChange={(v) => void bulkSnooze(parseInt(v))}>
+            <SelectTrigger className="h-8 text-xs gap-1 w-auto px-3 border-0 bg-muted hover:bg-muted/80">
+              <SelectValue placeholder="Snooze" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="1">1 day</SelectItem>
+              <SelectItem value="3">3 days</SelectItem>
+              <SelectItem value="7">1 week</SelectItem>
+              <SelectItem value="14">2 weeks</SelectItem>
+            </SelectContent>
+          </Select>
+          {/* Tag */}
+          <Button
+            variant="ghost" size="sm" className="h-8 text-xs gap-1.5"
+            onClick={() => {
+              const t = window.prompt('Add tag (no #)')?.trim().replace(/^#/, '')
+              if (t) void bulkAddTag(t)
+            }}
+            disabled={bulkActing}
+          >+ tag</Button>
+          {/* Delete */}
+          <Button
+            variant="ghost" size="sm" className="h-8 text-xs gap-1.5 text-red-700 hover:text-red-800 hover:bg-red-50"
+            onClick={bulkDelete}
+            disabled={bulkActing}
+          >Delete</Button>
+          <span className="h-5 w-px bg-border mx-1" />
+          <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={clearSelection}>
+            Clear
+          </Button>
+        </div>
+      )}
+
       {/* Add lead dialog */}
       <Dialog open={addOpen} onOpenChange={o => { setAddOpen(o); if (!o) setError('') }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
@@ -762,19 +1025,20 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
 
 function LeadCard({
   lead, stageColor, stageIndex, totalStages, onNavigate, onScore, onMoveForward, onMoveBack, scoring,
-  dragHandleProps, isDragging,
+  dragHandleProps, isDragging, selected,
 }: {
   lead: CRMLead
   stageColor: string
   stageIndex: number
   totalStages: number
-  onNavigate: () => void
+  onNavigate: (ev: React.MouseEvent) => void
   onScore: () => void
   onMoveForward: () => void
   onMoveBack: () => void
   scoring: boolean
   dragHandleProps?: React.HTMLAttributes<HTMLElement> | null
   isDragging?: boolean
+  selected?: boolean
 }) {
   const isOverdue = lead.next_follow_up && new Date(lead.next_follow_up) < new Date() && !['won', 'lost'].includes(lead.stage)
   const healthColor = lead.deal_health === 'red'    ? '#ef4444'
@@ -784,11 +1048,12 @@ function LeadCard({
 
   return (
     <div
-      className={`border border-border rounded-lg p-3 bg-card hover:border-primary/30 transition-all cursor-pointer group relative ${
+      className={`border rounded-lg p-3 bg-card hover:border-primary/30 transition-all cursor-pointer group relative ${
         isDragging ? 'shadow-lg ring-2 ring-primary/30 rotate-1' : ''
-      }`}
+      } ${selected ? 'border-primary ring-2 ring-primary/40 bg-primary/5' : 'border-border'}`}
       onClick={onNavigate}
       style={{ borderLeft: `2px solid ${stageColor}` }}
+      title="⌘-click / Ctrl-click to toggle selection"
     >
       {healthColor && (
         <div
@@ -828,6 +1093,17 @@ function LeadCard({
 
       {lead.service_interest && (
         <p className="text-xs text-muted-foreground mb-2 truncate">{lead.service_interest}</p>
+      )}
+
+      {lead.tags && lead.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-2">
+          {lead.tags.slice(0, 4).map(t => (
+            <span key={t} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted text-muted-foreground">#{t}</span>
+          ))}
+          {lead.tags.length > 4 && (
+            <span className="text-[10px] text-muted-foreground/60">+{lead.tags.length - 4}</span>
+          )}
+        </div>
       )}
 
       {lead.active_sequence && (
