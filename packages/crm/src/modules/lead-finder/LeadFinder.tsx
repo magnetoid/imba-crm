@@ -8,10 +8,12 @@ import { Badge } from '@imba/shared/ui/badge'
 import { Textarea } from '@imba/shared/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@imba/shared/ui/select'
 import { Separator } from '@imba/shared/ui/separator'
+import { Switch } from '@imba/shared/ui/switch'
 import toast from 'react-hot-toast'
 import {
   Search, Sparkles, Loader2, Building2, Mail, Globe, Phone, CheckCircle2, Plus,
   Download, Star, Target, History, FileSpreadsheet, Bot, Sliders, AlertCircle,
+  MapPin, Zap, Trash2, ExternalLink,
 } from 'lucide-react'
 import { autoScoreLead, logActivity } from '@/lib/crm-utils'
 import { logGeneration } from '@/lib/aiGenerations'
@@ -32,20 +34,21 @@ const INDUSTRIES = ['E-commerce & Retail', 'SaaS & Tech', 'Real Estate', 'Health
 const SIZES = ['1–10', '11–50', '51–200', '201–500', '500+']
 const GOALS = ['brand awareness', 'product launch', 'lead generation', 'investor pitch', 'social media content', 'eLearning / training']
 
-type Tab = 'ai' | 'csv' | 'apify' | 'icp'
+type Tab = 'smart' | 'ai' | 'csv' | 'apify' | 'icp'
 
 const TABS: Array<{ id: Tab; label: string; icon: typeof Sparkles; description: string }> = [
-  { id: 'ai',    label: 'AI search',  icon: Sparkles,        description: 'LLM-imagined prospects from a niche' },
-  { id: 'csv',   label: 'CSV import', icon: FileSpreadsheet, description: 'Paste a list from anywhere' },
-  { id: 'apify', label: 'Real search', icon: Bot,            description: 'Run an Apify actor (LinkedIn, GMaps…)' },
-  { id: 'icp',   label: 'ICP rules',  icon: Sliders,         description: 'Define what a fit-100 lead looks like' },
+  { id: 'smart', label: 'Smart search', icon: Zap,            description: 'Real prospects from Google Maps + auto-enriched emails' },
+  { id: 'ai',    label: 'AI brainstorm', icon: Sparkles,      description: 'LLM-imagined prospects (not verified)' },
+  { id: 'csv',   label: 'CSV import',  icon: FileSpreadsheet, description: 'Paste a list from anywhere' },
+  { id: 'apify', label: 'Apify advanced', icon: Bot,          description: 'Raw Apify actor + JSON input' },
+  { id: 'icp',   label: 'ICP rules',   icon: Sliders,         description: 'Define what a fit-100 lead looks like' },
 ]
 
 export default function AILeadSearcher() {
   const [tab, setTab] = useState<Tab>(() => {
-    if (typeof window === 'undefined') return 'ai'
+    if (typeof window === 'undefined') return 'smart'
     const h = window.location.hash.replace('#', '') as Tab
-    return TABS.some(t => t.id === h) ? h : 'ai'
+    return TABS.some(t => t.id === h) ? h : 'smart'
   })
   useEffect(() => {
     if (typeof window !== 'undefined' && window.location.hash !== `#${tab}`) {
@@ -85,10 +88,321 @@ export default function AILeadSearcher() {
         })}
       </div>
 
+      {tab === 'smart' && <SmartSearchPane />}
       {tab === 'ai'    && <AISearchPane />}
       {tab === 'csv'   && <CsvImportPane />}
       {tab === 'apify' && <ApifyPane />}
       {tab === 'icp'   && <IcpRulesPane />}
+    </div>
+  )
+}
+
+// ── 0. Smart search (Apify Google-Maps-backed real prospecting) ───────
+// Wraps the lead-finder agent in a friendly form. Operator picks a niche,
+// city, country, and count — we build the Apify Google-Maps-scraper
+// input automatically, queue the agent, and poll for results. With
+// auto-enrich on, every saved lead also gets a lead-enricher job so the
+// emails land verified (Hunter) and titles backfilled (Apollo).
+interface IcpRulesLite { industries?: string[]; countries?: string[]; titles_must_match?: string[] }
+
+interface FoundLead {
+  id: string
+  name: string | null
+  company: string | null
+  email: string | null
+  phone: string | null
+  website: string | null
+  linkedin_url: string | null
+  notes: string | null
+  created_at: string
+}
+
+interface RecentJob {
+  id: string
+  status: string
+  output: Record<string, unknown> | null
+  error: string | null
+  created_at: string
+  input: Record<string, unknown>
+}
+
+function SmartSearchPane() {
+  const [niche, setNiche]         = useState('')
+  const [city, setCity]           = useState('')
+  const [country, setCountry]     = useState('')
+  const [maxResults, setMaxResults] = useState(50)
+  const [autoEnrich, setAutoEnrich] = useState(true)
+  const [icp, setIcp] = useState<IcpRulesLite | null>(null)
+  const [queueing, setQueueing] = useState(false)
+  const [activeJob, setActiveJob] = useState<RecentJob | null>(null)
+  const [searchStartedAt, setSearchStartedAt] = useState<string | null>(null)
+  const [results, setResults] = useState<FoundLead[]>([])
+  const [apifyConfigured, setApifyConfigured] = useState<boolean | null>(null)
+
+  // ── Load ICP rules + check Apify creds ────────────────────────────
+  useEffect(() => {
+    void (async () => {
+      const { data } = await supabase.from('crm_runtime_settings').select('icp_rules').eq('id', 1).maybeSingle()
+      setIcp(((data as { icp_rules?: IcpRulesLite } | null)?.icp_rules) ?? null)
+      const { data: cred } = await supabase
+        .from('crm_provider_credentials')
+        .select('provider').eq('provider', 'apify').maybeSingle()
+      setApifyConfigured(!!cred)
+    })()
+  }, [])
+
+  // ── Poll active job until finished, then load saved leads ─────────
+  useEffect(() => {
+    if (!activeJob) return
+    if (activeJob.status === 'finished' || activeJob.status === 'failed' || activeJob.status === 'cancelled') return
+    const t = setInterval(async () => {
+      const { data } = await supabase
+        .from('crm_agent_jobs')
+        .select('id, status, output, error, created_at, input')
+        .eq('id', activeJob.id)
+        .maybeSingle()
+      if (data) setActiveJob(data as RecentJob)
+    }, 2500)
+    return () => clearInterval(t)
+  }, [activeJob])
+
+  useEffect(() => {
+    if (!activeJob || !searchStartedAt) return
+    if (activeJob.status !== 'finished') return
+    void (async () => {
+      const { data } = await supabase
+        .from('crm_leads')
+        .select('id, name, company, email, phone, website, linkedin_url, notes, created_at')
+        .eq('source', 'lead-finder')
+        .gte('created_at', searchStartedAt)
+        .order('created_at', { ascending: false })
+        .limit(200)
+      setResults((data as FoundLead[] | null) ?? [])
+    })()
+  }, [activeJob, searchStartedAt])
+
+  async function search() {
+    if (!niche.trim()) return toast.error('Niche / industry required.')
+    if (!apifyConfigured) {
+      toast.error('Apify API key missing. Add it under Settings → AI providers.')
+      return
+    }
+    setQueueing(true)
+    setResults([])
+    const startedAt = new Date().toISOString()
+    setSearchStartedAt(startedAt)
+    const searchString = [niche.trim(), city.trim(), country.trim()].filter(Boolean).join(' ')
+    const { data, error } = await supabase
+      .from('crm_agent_jobs')
+      .insert({
+        agent_kind: 'lead-finder',
+        input: {
+          actor_id: 'apify/google-maps-scraper',
+          actor_input: {
+            searchStringsArray: [searchString],
+            maxCrawledPlacesPerSearch: maxResults,
+            language: 'en',
+            scrapeContacts: true,
+          },
+          max_save: maxResults,
+          auto_enrich: autoEnrich,
+        },
+        triggered_by: 'smart-search',
+      })
+      .select('id, status, output, error, created_at, input')
+      .single()
+    setQueueing(false)
+    if (error || !data) return toast.error(error?.message ?? 'failed to queue search')
+    setActiveJob(data as RecentJob)
+    toast.success('Searching real prospects — results land here as they arrive.')
+  }
+
+  async function deleteLead(id: string) {
+    const { error } = await supabase.from('crm_leads').delete().eq('id', id)
+    if (error) return toast.error(error.message)
+    setResults(rs => rs.filter(r => r.id !== id))
+  }
+
+  const isRunning = activeJob && ['queued', 'running', 'awaiting_approval'].includes(activeJob.status)
+  const finished  = activeJob?.status === 'finished'
+  const failed    = activeJob?.status === 'failed' || activeJob?.status === 'cancelled'
+  const out       = (activeJob?.output ?? {}) as { saved?: { companies?: number; leads?: number }; items_scraped?: number; enrichment_enqueued?: number }
+  const savedCount = out?.saved?.leads ?? 0
+
+  return (
+    <div className="space-y-6">
+      {/* Banner */}
+      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 flex items-start gap-3">
+        <Zap className="h-4 w-4 text-emerald-700 mt-0.5 flex-shrink-0" />
+        <div className="text-xs text-emerald-900">
+          <strong>Real prospects, not LLM guesses.</strong> Smart search runs the <code>apify/google-maps-scraper</code> actor
+          for your niche + location, dedupes by domain, saves to your CRM, and (with auto-enrich on) fans out
+          <code> lead-enricher</code> jobs to find verified emails via Hunter + person details via Apollo.
+        </div>
+      </div>
+
+      {apifyConfigured === false && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
+          <AlertCircle className="h-4 w-4 text-amber-700 mt-0.5 flex-shrink-0" />
+          <div className="text-xs text-amber-900">
+            No Apify API key found. Go to <strong>Settings → AI providers</strong>, pick <code>apify</code>, and paste your token. Free tier covers ~$5/mo of actor runs.
+          </div>
+        </div>
+      )}
+
+      {/* Form */}
+      <div className="bg-card border border-border rounded-lg p-6 shadow-sm">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+          <div className="flex flex-col gap-1.5 lg:col-span-2">
+            <Label>Niche / industry *</Label>
+            <Input
+              value={niche}
+              onChange={e => setNiche(e.target.value)}
+              list="niche-suggestions"
+              placeholder="dentist, marketing agency, real estate, hotel…"
+            />
+            <datalist id="niche-suggestions">
+              {(icp?.industries ?? []).map(i => <option key={i} value={i} />)}
+              <option value="dentist" />
+              <option value="marketing agency" />
+              <option value="real estate agency" />
+              <option value="restaurant" />
+              <option value="law firm" />
+              <option value="accounting firm" />
+              <option value="hotel" />
+              <option value="gym" />
+            </datalist>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>City</Label>
+            <Input value={city} onChange={e => setCity(e.target.value)} placeholder="Belgrade" />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Country</Label>
+            <Input
+              value={country}
+              onChange={e => setCountry(e.target.value)}
+              list="country-suggestions"
+              placeholder="Serbia"
+            />
+            <datalist id="country-suggestions">
+              {(icp?.countries ?? []).map(c => <option key={c} value={c} />)}
+            </datalist>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Max results</Label>
+            <Select value={String(maxResults)} onValueChange={v => setMaxResults(Number(v))}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {[10, 25, 50, 100, 200].map(n => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-end gap-2 lg:col-span-3">
+            <div className="flex items-center gap-2 bg-muted/40 border border-border rounded-md px-3 py-2">
+              <Switch checked={autoEnrich} onCheckedChange={setAutoEnrich} id="auto-enrich" />
+              <Label htmlFor="auto-enrich" className="text-xs cursor-pointer">
+                Auto-enrich (Hunter email + Apollo title — needs creds)
+              </Label>
+            </div>
+          </div>
+        </div>
+        <Button onClick={search} disabled={queueing || isRunning || !niche.trim()} className="gap-2">
+          {queueing || isRunning
+            ? <><Loader2 className="h-4 w-4 animate-spin" />{isRunning ? `Status: ${activeJob.status}…` : 'Queueing…'}</>
+            : <><Search className="h-4 w-4" />Find real prospects</>}
+        </Button>
+        <p className="text-[11px] text-muted-foreground mt-3">
+          Tip: be specific. <code>"law firm Berlin Germany"</code> beats <code>"law"</code>. Add a niche modifier (luxury, B2B, vegan, …) if the list is too broad.
+        </p>
+      </div>
+
+      {/* Job status banner */}
+      {activeJob && (
+        <div className={`rounded-lg p-4 border flex items-center justify-between ${
+          finished ? 'bg-emerald-50 border-emerald-200'
+            : failed ? 'bg-red-50 border-red-200'
+            : 'bg-blue-50 border-blue-200'
+        }`}>
+          <div className="flex items-center gap-3 text-sm">
+            {isRunning && <Loader2 className="h-4 w-4 animate-spin text-blue-700" />}
+            {finished && <CheckCircle2 className="h-4 w-4 text-emerald-700" />}
+            {failed && <AlertCircle className="h-4 w-4 text-red-700" />}
+            <span className="font-mono text-xs">job {activeJob.id.slice(0, 8)}</span>
+            <span>{activeJob.status}</span>
+            {finished && (
+              <>
+                <span className="text-muted-foreground">·</span>
+                <span>{out.items_scraped ?? 0} scraped → {savedCount} saved</span>
+                {out.enrichment_enqueued ? <span className="text-muted-foreground">· {out.enrichment_enqueued} enrichments queued</span> : null}
+              </>
+            )}
+            {failed && activeJob.error && <span className="text-red-700 truncate max-w-md">{activeJob.error}</span>}
+          </div>
+        </div>
+      )}
+
+      {/* Results */}
+      {results.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm text-muted-foreground">{results.length} leads in CRM from this search</p>
+            <Button variant="outline" size="sm" onClick={() => { setActiveJob(null); setResults([]); setSearchStartedAt(null) }}>
+              Clear
+            </Button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {results.map(l => (
+              <div key={l.id} className="bg-card border border-border rounded-lg p-4 shadow-sm flex flex-col">
+                <div className="flex items-start justify-between gap-3 mb-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
+                      <Building2 className="h-4 w-4 text-primary" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-medium text-sm truncate">{l.company ?? l.name ?? '(unnamed)'}</p>
+                      {l.name && l.name !== l.company && <p className="text-xs text-muted-foreground truncate">{l.name}</p>}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => deleteLead(l.id)}
+                    title="Remove from CRM"
+                    className="text-muted-foreground hover:text-red-600 transition-colors"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  {l.email   && <span className="flex items-center gap-1"><Mail   className="h-3 w-3" />{l.email}</span>}
+                  {l.phone   && <span className="flex items-center gap-1"><Phone  className="h-3 w-3" />{l.phone}</span>}
+                  {l.website && (
+                    <a href={l.website} target="_blank" rel="noreferrer" className="flex items-center gap-1 hover:text-primary">
+                      <Globe className="h-3 w-3" />{l.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+                      <ExternalLink className="h-2.5 w-2.5" />
+                    </a>
+                  )}
+                </div>
+                {l.notes && (
+                  <p className="text-[11px] text-muted-foreground mt-2 leading-relaxed line-clamp-2">
+                    <MapPin className="h-3 w-3 inline mr-1 -mt-0.5" />{l.notes}
+                  </p>
+                )}
+                {!l.email && autoEnrich && (
+                  <p className="text-[10px] text-amber-700 mt-2">Email pending — enrichment job is finding it.</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Empty state hint */}
+      {!activeJob && results.length === 0 && (
+        <div className="text-center text-xs text-muted-foreground py-8">
+          <Target className="h-4 w-4 mx-auto mb-2 opacity-50" />
+          Pick a niche + city and click <strong>Find real prospects</strong>.
+        </div>
+      )}
     </div>
   )
 }
