@@ -40,6 +40,7 @@ export interface CRMLead {
   deal_health?: 'green' | 'yellow' | 'red'
   deal_health_reason?: string
   stage_entered_at?: string
+  exit_checklist?: Record<string, boolean>
   last_contacted_at?: string
   next_follow_up?: string
   created_at: string
@@ -285,9 +286,24 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
   // ── Drag & Drop handler ──────────────────────────────────
   async function changeStage(lead: CRMLead, newStage: string) {
     if (lead.stage === newStage) return
+    // Validate exit criteria via the RPC. Optimistic update; rollback
+    // (and toast the missing items) if blocked.
+    const previousStage = lead.stage
     setLeads(prev => prev.map(l => l.id === lead.id ? { ...l, stage: newStage } : l))
-    await supabase.from('crm_leads').update({ stage: newStage }).eq('id', lead.id)
-    logActivity(lead.id, 'note', `Stage changed: ${lead.stage} → ${newStage}`)
+    const { data, error } = await supabase.rpc('move_lead_stage', { p_lead_id: lead.id, p_to_stage: newStage })
+    if (error) {
+      setLeads(prev => prev.map(l => l.id === lead.id ? { ...l, stage: previousStage } : l))
+      toast.error(error.message)
+      return
+    }
+    const result = data as { ok: boolean; missing?: string[]; error?: string } | null
+    if (!result?.ok) {
+      setLeads(prev => prev.map(l => l.id === lead.id ? { ...l, stage: previousStage } : l))
+      const missing = result?.missing?.length ? ` Missing: ${result.missing.join(', ')}` : ''
+      toast.error(`Can't move to ${newStage}.${missing}`)
+      return
+    }
+    logActivity(lead.id, 'note', `Stage changed: ${previousStage} → ${newStage}`)
 
     // Auto-action: when moved to "won", create an invoice from signed proposal
     if (newStage === 'won') {

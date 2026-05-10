@@ -51,21 +51,28 @@ export default function LeadDetail() {
   const [outreachEmails, setOutreachEmails] = useState<Array<{ id: string; subject: string; status: string; sent_at: string | null; created_at: string }>>([])
   const [leadProposals, setLeadProposals] = useState<Array<{ id: string; title: string; amount: number | null; status: string; sent_at: string | null; signed_at: string | null; created_at: string }>>([])
   const [leadInvoices, setLeadInvoices] = useState<Array<{ id: string; invoice_number: string; total: number; status: string; paid_at: string | null; created_at: string }>>([])
+  const [stageRequirements, setStageRequirements] = useState<Record<string, Record<string, true>>>({})
 
   const loadAll = useCallback(async () => {
     if (!id) return
-    const [leadRes, activitiesRes, emailsRes, proposalsRes, invoicesRes] = await Promise.all([
+    const [leadRes, activitiesRes, emailsRes, proposalsRes, invoicesRes, stagesRes] = await Promise.all([
       supabase.from('crm_leads').select('*').eq('id', id).single(),
       supabase.from('crm_activities').select('*').eq('lead_id', id).order('created_at', { ascending: false }),
       supabase.from('crm_outreach_emails').select('id,subject,status,sent_at,created_at').eq('lead_id', id).order('created_at', { ascending: false }),
       supabase.from('crm_proposals').select('id,title,amount,status,sent_at,signed_at,created_at').eq('lead_id', id).order('created_at', { ascending: false }),
       supabase.from('crm_invoices').select('id,invoice_number,total,status,paid_at,created_at').eq('lead_id', id).order('created_at', { ascending: false }),
+      supabase.from('crm_pipeline_stages').select('key, required'),
     ])
     setLead(leadRes.data)
     setActivities(activitiesRes.data || [])
     setOutreachEmails(emailsRes.data || [])
     setLeadProposals(proposalsRes.data || [])
     setLeadInvoices(invoicesRes.data || [])
+    const reqs: Record<string, Record<string, true>> = {}
+    for (const r of (stagesRes.data || []) as Array<{ key: string; required: Record<string, unknown> | null }>) {
+      reqs[r.key] = (r.required as Record<string, true>) ?? {}
+    }
+    setStageRequirements(reqs)
     setLoading(false)
   }, [id])
 
@@ -77,6 +84,29 @@ export default function LeadDetail() {
     await supabase.from('crm_leads').update({ [field]: value }).eq('id', lead.id)
     setLead(l => l ? { ...l, [field]: value } : l)
     setSaving(false)
+  }
+
+  async function moveStage(target: string) {
+    if (!lead || target === lead.stage) return
+    setSaving(true)
+    const { data, error } = await supabase.rpc('move_lead_stage', { p_lead_id: lead.id, p_to_stage: target })
+    setSaving(false)
+    if (error) { toast.error(error.message); return }
+    const result = data as { ok: boolean; missing?: string[]; error?: string }
+    if (!result?.ok) {
+      const missing = result?.missing?.length ? ` Missing: ${result.missing.join(', ')}` : ''
+      toast.error(`${result?.error || 'blocked'}${missing}`)
+      return
+    }
+    setLead(l => l ? { ...l, stage: target } : l)
+    toast.success(`Moved to ${target}`)
+  }
+
+  async function toggleChecklist(key: string, value: boolean) {
+    if (!lead) return
+    const next = { ...((lead as { exit_checklist?: Record<string, boolean> }).exit_checklist ?? {}), [key]: value }
+    await supabase.from('crm_leads').update({ exit_checklist: next }).eq('id', lead.id)
+    setLead(l => l ? { ...l, exit_checklist: next } as CRMLead : l)
   }
 
   async function addActivity(e: React.FormEvent) {
@@ -315,14 +345,14 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "recommendation"}`
       </div>
 
       {/* Stage stepper */}
-      <div className="flex items-center gap-0 mb-6 overflow-x-auto pb-1">
+      <div className="flex items-center gap-0 mb-3 overflow-x-auto pb-1">
         {STAGES.map((s, i) => {
           const isPast = i < stageIndex
           const isCurrent = i === stageIndex
           return (
             <button
               key={s.key}
-              onClick={() => saveField('stage', s.key)}
+              onClick={() => void moveStage(s.key)}
               className="flex items-center group"
             >
               <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-mono transition-all ${
@@ -341,6 +371,53 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "recommendation"}`
         })}
       </div>
 
+      {/* Exit checklist for the current stage. Hides when there are no
+          required keys (e.g. 'new' or 'lost'). */}
+      {(() => {
+        const required = stageRequirements[lead.stage] ?? {}
+        const keys = Object.keys(required)
+        if (keys.length === 0) return null
+        const checklist = (lead as { exit_checklist?: Record<string, boolean> }).exit_checklist ?? {}
+        const done = keys.filter(k => checklist[k]).length
+        return (
+          <div className="bg-card border border-border rounded-lg p-4 mb-6 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
+                Exit checklist for {lead.stage}
+              </p>
+              <span className="text-xs text-muted-foreground">{done}/{keys.length} done</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {keys.map(k => {
+                const checked = !!checklist[k]
+                const label = k.replace(/_/g, ' ').replace(/\bcompleted\b/g, '✓').trim()
+                return (
+                  <button
+                    key={k}
+                    onClick={() => void toggleChecklist(k, !checked)}
+                    className={`flex items-center gap-2 text-left px-3 py-2 rounded border text-sm transition-colors ${
+                      checked
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                        : 'border-border hover:bg-muted'
+                    }`}
+                  >
+                    <span className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
+                      checked ? 'bg-emerald-600 border-emerald-600' : 'border-border'
+                    }`}>
+                      {checked && <Check className="h-3 w-3 text-white" />}
+                    </span>
+                    <span className="capitalize">{label}</span>
+                  </button>
+                )
+              })}
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-2">
+              All items must be ticked before this lead can move to the next stage.
+            </p>
+          </div>
+        )
+      })()}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Lead info */}
         <div className="lg:col-span-2 flex flex-col gap-5">
@@ -351,7 +428,7 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "recommendation"}`
                 <h1 className="text-2xl font-semibold text-foreground">{lead.name}</h1>
                 {lead.company && <p className="text-muted-foreground mt-1 flex items-center gap-1.5"><Building className="h-3.5 w-3.5" />{lead.company}</p>}
               </div>
-              <Select value={lead.stage} onValueChange={v => saveField('stage', v)}>
+              <Select value={lead.stage} onValueChange={v => void moveStage(v)}>
                 <SelectTrigger className="w-[160px]" style={{ borderColor: `${stageInfo?.color}40`, color: stageInfo?.color }}>
                   <SelectValue />
                 </SelectTrigger>

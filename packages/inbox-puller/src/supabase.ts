@@ -180,7 +180,60 @@ export async function insertInboxMessage(m: IncomingMessage): Promise<string | n
     console.error(JSON.stringify({ msg: 'failed to insert inbox message', subject: m.subject, error: error.message }))
     return null
   }
+
+  // Reply threading: if this inbound message belongs to a known lead,
+  // mark the most recent unanswered outbound attempt as responded
+  // (this also fires the hot-lead-alert trigger), tick the legacy
+  // crm_outreach_emails.replied_at, and cancel any queued/scheduled
+  // future steps so the sequence pauses.
+  if (leadId) {
+    void threadInboundReply(leadId, m.received_at).catch(err =>
+      console.error(JSON.stringify({ msg: 'reply threading failed', leadId, error: (err as Error).message })),
+    )
+  }
+
   return (data as { id: string } | null)?.id ?? null
+}
+
+async function threadInboundReply(leadId: string, receivedAt: string) {
+  // 1. Tick the most recent sent-but-unanswered outreach attempt.
+  const { data: pending } = await supabase
+    .from('crm_outreach_attempts')
+    .select('id, sequence_id')
+    .eq('lead_id', leadId)
+    .is('responded_at', null)
+    .not('sent_at', 'is', null)
+    .order('sent_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const row = pending as { id: string; sequence_id: string | null } | null
+  if (row) {
+    await supabase
+      .from('crm_outreach_attempts')
+      .update({ responded_at: receivedAt })
+      .eq('id', row.id)
+
+    // 2. If the responded attempt is part of a sequence, cancel the
+    // remaining queued/scheduled steps so the operator decides what
+    // to do next instead of the sequence robot keeping pace.
+    if (row.sequence_id) {
+      await supabase
+        .from('crm_outreach_attempts')
+        .update({ status: 'cancelled' })
+        .eq('lead_id', leadId)
+        .eq('sequence_id', row.sequence_id)
+        .in('status', ['queued'])
+    }
+  }
+
+  // 3. Mark the legacy crm_outreach_emails as replied if any are still
+  //    in the sent/opened state. This keeps the legacy email-only UI
+  //    consistent with the new attempts model.
+  await supabase
+    .from('crm_outreach_emails')
+    .update({ status: 'replied', replied_at: receivedAt })
+    .eq('lead_id', leadId)
+    .in('status', ['sent', 'opened'])
 }
 
 export async function updateInboxAI(
