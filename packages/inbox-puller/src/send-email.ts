@@ -18,7 +18,10 @@ function classifyBounce(s: string): string {
 }
 
 import nodemailer, { type Transporter } from 'nodemailer'
-import { supabase, getProviderSecret } from './supabase.js'
+import { supabase, getProviderSecret, loadProviderCredential } from './supabase.js'
+import { verifyEmail } from '@imba/shared/integrations/hunter'
+
+const VERIFICATION_CACHE_DAYS = 30  // re-verify after this stale window
 
 const TRACK_BASE = process.env.TRACK_BASE_URL || ''  // e.g. https://crm.imbaproduction.com
 
@@ -147,6 +150,52 @@ async function getRecipientEmail(leadId: string): Promise<string | null> {
   return (data as { email: string | null } | null)?.email ?? null
 }
 
+interface VerificationResult {
+  result: 'deliverable' | 'risky' | 'undeliverable' | 'unknown'
+  score: number
+  checked_at: string
+  provider: string
+}
+
+/** Verify an email address via Hunter. Caches the result on
+ *  crm_leads.email_verification so a sequence ticking the same lead 5
+ *  times doesn't burn 5 verifications. Returns null when the verifier
+ *  itself fails (creds missing, rate-limited) — caller decides whether
+ *  to send anyway. */
+async function verifyRecipient(leadId: string, email: string): Promise<VerificationResult | null> {
+  // 1. Check the cache.
+  const { data: lead } = await supabase
+    .from('crm_leads')
+    .select('email_verification')
+    .eq('id', leadId)
+    .maybeSingle()
+  const cached = (lead as { email_verification: VerificationResult | null } | null)?.email_verification ?? null
+  if (cached) {
+    const age = (Date.now() - new Date(cached.checked_at).getTime()) / (1000 * 60 * 60 * 24)
+    if (age < VERIFICATION_CACHE_DAYS) return cached
+  }
+  // 2. Fresh check via Hunter.
+  const cred = await loadProviderCredential('hunter')
+  if (!cred?.apiKey) return null
+  try {
+    const res = await verifyEmail(cred, email)
+    const result = (res.result === 'deliverable' || res.result === 'risky' || res.result === 'undeliverable')
+      ? res.result
+      : 'unknown'
+    const verification: VerificationResult = {
+      result,
+      score: res.score ?? 0,
+      checked_at: new Date().toISOString(),
+      provider: 'hunter',
+    }
+    await supabase.from('crm_leads').update({ email_verification: verification }).eq('id', leadId)
+    return verification
+  } catch (err) {
+    log('warn', 'pre-send verification failed', { lead_id: leadId, error: (err as Error).message })
+    return null
+  }
+}
+
 async function recordEvent(emailId: string, eventType: string, metadata: Record<string, unknown> = {}) {
   await supabase.from('crm_email_events').insert({
     email_id: emailId,
@@ -212,6 +261,33 @@ export async function pollOutreach() {
     if (!recipient) {
       log('warn', 'lead has no email; skipping', { id: row.id, lead_id: row.lead_id })
       continue
+    }
+
+    // ── Pre-send verification (Hunter). Refuse to send if the address
+    // is known-undeliverable — protects sender reputation. risky/unknown
+    // get through with a warning. If verification itself fails (e.g.
+    // Hunter creds missing) we let the send proceed; that's a config
+    // problem, not a deliverability problem.
+    const verification = await verifyRecipient(row.lead_id, recipient)
+    if (verification?.result === 'undeliverable') {
+      await supabase.from('crm_outreach_emails')
+        .update({
+          status: 'failed',
+          rejection_reason: 'preflight_verification_failed',
+          bounce_reason: 'preflight_undeliverable',
+          last_error: `Hunter verification said undeliverable (score ${verification.score})`,
+          last_error_at: new Date().toISOString(),
+        })
+        .eq('id', row.id)
+      log('warn', 'pre-send verification failed; skipping', {
+        id: row.id, to: recipient, score: verification.score,
+      })
+      continue
+    }
+    if (verification?.result === 'risky') {
+      log('info', 'pre-send verification: risky address (sending anyway)', {
+        id: row.id, to: recipient, score: verification.score,
+      })
     }
     const fromAddr = row.from_email || settings.smtp_from_email || settings.smtp_username
     const fromHeader = settings.smtp_from_name
