@@ -139,6 +139,8 @@ export async function markPop3Error(message: string) {
 export interface IncomingMessage {
   from_email: string | null
   to_email: string | null
+  cc:  string[] | null
+  bcc: string[] | null
   subject: string | null
   body: string
   received_at: string
@@ -214,6 +216,8 @@ export async function insertInboxMessage(m: IncomingMessage): Promise<string | n
       body: m.body,
       from_email: m.from_email,
       to_email: m.to_email,
+      cc:  m.cc,
+      bcc: m.bcc,
       status: 'unread',
       received_at: m.received_at,
       type: 'general',

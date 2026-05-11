@@ -31,6 +31,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@imba/shared/supabase'
 import { Button } from '@imba/shared/ui/button'
 import { Input } from '@imba/shared/ui/input'
+import { Label } from '@imba/shared/ui/label'
 import { Textarea } from '@imba/shared/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@imba/shared/ui/select'
 import { Badge } from '@imba/shared/ui/badge'
@@ -66,6 +67,8 @@ interface MessageRow {
   body: string
   from_email: string | null
   to_email: string | null
+  cc:  string[] | null
+  bcc: string[] | null
   status: string
   ai_category: string | null
   ai_sentiment: string | null
@@ -125,6 +128,12 @@ export default function AIInbox() {
   const [lead, setLead] = useState<LeadRow | null>(null)
   const [loadingThread, setLoadingThread] = useState(false)
   const [draft, setDraft] = useState('')
+  const [draftCc,  setDraftCc]  = useState('')
+  const [draftBcc, setDraftBcc] = useState('')
+  const [showCc,   setShowCc]   = useState(false)
+  const [showBcc,  setShowBcc]  = useState(false)
+  const [draftSubject, setDraftSubject] = useState('')
+  const [draftTo,  setDraftTo]  = useState('')
   const [sending, setSending] = useState(false)
   const [suggestions, setSuggestions] = useState<Array<{ label: string; text: string }> | null>(null)
   const [suggestBusy, setSuggestBusy] = useState(false)
@@ -223,7 +232,7 @@ export default function AIInbox() {
     setLead(null)
     const { data, error } = await supabase
       .from('crm_inbox_messages')
-      .select('id, thread_key, lead_id, direction, subject, body, from_email, to_email, status, ai_category, ai_sentiment, ai_suggested_reply, received_at, metadata')
+      .select('id, thread_key, lead_id, direction, subject, body, from_email, to_email, cc, bcc, status, ai_category, ai_sentiment, ai_suggested_reply, received_at, metadata')
       .eq('thread_key', key)
       .order('received_at', { ascending: true })
     // Race-guard: if the user has clicked another thread while this one
@@ -367,14 +376,36 @@ export default function AIInbox() {
     }
   }
 
+  // Parse the comma/semicolon-separated CC/BCC composer state into an
+  // array of email addresses. Drops empties + duplicates + non-emails.
+  function parseAddressList(raw: string): string[] {
+    if (!raw.trim()) return []
+    const seen = new Set<string>()
+    for (const piece of raw.split(/[,;\n]/)) {
+      const trimmed = piece.trim().toLowerCase()
+      if (!trimmed) continue
+      // Allow "Name <foo@bar.com>" — extract the bare address.
+      const m = trimmed.match(/<([^>]+)>/)
+      const addr = (m ? m[1] : trimmed).trim()
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) seen.add(addr)
+    }
+    return Array.from(seen)
+  }
+
   // ── Send + archive ─────────────────────────────────────────────────
   async function sendReply() {
     if (!selectedKey || !draft.trim()) return
     setSending(true)
     const lastInbound = [...messages].reverse().find(m => m.direction === 'inbound')
-    const recipientEmail = lead?.email ?? lastInbound?.from_email ?? null
+    // Allow operator-typed TO to override the default lead/lastInbound address.
+    const recipientEmail = draftTo.trim() || lead?.email || lastInbound?.from_email || null
     if (!recipientEmail) { toast.error('No recipient email'); setSending(false); return }
-    const replySubject = (lastInbound?.subject ?? messages[0]?.subject ?? '(no subject)').replace(/^(Re:\s*)+/i, '')
+    // Editable subject. Default to "Re: <last subject>"; if operator typed a
+    // different subject keep theirs.
+    const inferredSubject = `Re: ${(lastInbound?.subject ?? messages[0]?.subject ?? '(no subject)').replace(/^(Re:\s*)+/i, '')}`
+    const finalSubject = draftSubject.trim() || inferredSubject
+    const ccList  = parseAddressList(draftCc)
+    const bccList = parseAddressList(draftBcc)
 
     // Insert into crm_outreach_emails as 'approved' so the outbound
     // mailer picks it up. Also mirror as a crm_inbox_messages outbound
@@ -396,9 +427,11 @@ export default function AIInbox() {
 
     await supabase.from('crm_outreach_emails').insert({
       lead_id: lead?.id ?? null,
-      subject: `Re: ${replySubject}`,
+      subject: finalSubject,
       body: draft,
       to_email: recipientEmail,
+      cc:  ccList.length  > 0 ? ccList  : null,
+      bcc: bccList.length > 0 ? bccList : null,
       status: 'approved',
       ai_generated: false,
       tracking_id: trackingId,
@@ -409,10 +442,12 @@ export default function AIInbox() {
     await supabase.from('crm_inbox_messages').insert({
       lead_id: lead?.id ?? null,
       direction: 'outbound',
-      subject: `Re: ${replySubject}`,
+      subject: finalSubject,
       body: draft,
       from_email: smtpFromEmail,              // best-effort; send-email.ts may refine
       to_email: recipientEmail,
+      cc:  ccList.length  > 0 ? ccList  : null,
+      bcc: bccList.length > 0 ? bccList : null,
       status: 'sent',
       received_at: new Date().toISOString(),
       type: 'general',
@@ -433,6 +468,12 @@ export default function AIInbox() {
     })
     setSending(false)
     setDraft('')
+    setDraftSubject('')
+    setDraftTo('')
+    setDraftCc('')
+    setDraftBcc('')
+    setShowCc(false)
+    setShowBcc(false)
     setSuggestions(null)
     setPendingAttachments([])
     toast.success('Reply queued — outbound worker will send within a minute')
@@ -599,6 +640,67 @@ export default function AIInbox() {
                   <Button onClick={() => setComposePrompt('')} variant="ghost" size="sm">×</Button>
                 </div>
               ) : null}
+
+              {/* Recipient fields. Single TO row by default; click "Cc"/"Bcc"
+                  pills to reveal those fields. Mirrors Superhuman/Gmail.
+                  The TO field auto-derives from the open thread but operator
+                  can override. */}
+              <div className="space-y-1.5 border border-border rounded-md p-2 bg-muted/20">
+                <div className="flex items-center gap-2">
+                  <Label className="text-[10px] font-mono uppercase text-muted-foreground w-8">To</Label>
+                  <Input
+                    value={draftTo || (lead?.email ?? messages.findLast?.(m => m.direction === 'inbound')?.from_email ?? '')}
+                    onChange={e => setDraftTo(e.target.value)}
+                    placeholder={lead?.email ?? 'someone@example.com'}
+                    className="h-7 text-xs flex-1"
+                  />
+                  <div className="flex items-center gap-1 text-[10px]">
+                    {!showCc && (
+                      <button type="button" onClick={() => setShowCc(true)} className="text-muted-foreground hover:text-foreground underline">Cc</button>
+                    )}
+                    {!showBcc && (
+                      <button type="button" onClick={() => setShowBcc(true)} className="text-muted-foreground hover:text-foreground underline">Bcc</button>
+                    )}
+                  </div>
+                </div>
+                {showCc && (
+                  <div className="flex items-center gap-2">
+                    <Label className="text-[10px] font-mono uppercase text-muted-foreground w-8">Cc</Label>
+                    <Input
+                      value={draftCc}
+                      onChange={e => setDraftCc(e.target.value)}
+                      placeholder="comma-separated"
+                      className="h-7 text-xs flex-1"
+                    />
+                    <button type="button" onClick={() => { setShowCc(false); setDraftCc('') }} className="text-muted-foreground hover:text-red-600">
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                )}
+                {showBcc && (
+                  <div className="flex items-center gap-2">
+                    <Label className="text-[10px] font-mono uppercase text-muted-foreground w-8">Bcc</Label>
+                    <Input
+                      value={draftBcc}
+                      onChange={e => setDraftBcc(e.target.value)}
+                      placeholder="hidden recipients, comma-separated"
+                      className="h-7 text-xs flex-1"
+                    />
+                    <button type="button" onClick={() => { setShowBcc(false); setDraftBcc('') }} className="text-muted-foreground hover:text-red-600">
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <Label className="text-[10px] font-mono uppercase text-muted-foreground w-8">Subj</Label>
+                  <Input
+                    value={draftSubject}
+                    onChange={e => setDraftSubject(e.target.value)}
+                    placeholder={`Re: ${(messages.findLast?.(m => m.direction === 'inbound')?.subject ?? messages[0]?.subject ?? '').replace(/^(Re:\s*)+/i, '') || '(no subject)'}`}
+                    className="h-7 text-xs flex-1"
+                  />
+                </div>
+              </div>
 
               <Textarea
                 ref={composerRef}

@@ -36,6 +36,8 @@ interface OutreachRow {
   email_references: string[] | null
   sent_message_id: string | null
   attachment_storage_paths: string[] | null
+  cc:  string[] | null
+  bcc: string[] | null
 }
 
 interface NodemailerAttachment {
@@ -231,7 +233,7 @@ export async function pollOutreach() {
   // Pull a small batch each tick so a backlog drains gradually.
   const { data: rows, error } = await supabase
     .from('crm_outreach_emails')
-    .select('id, tracking_id, lead_id, subject, body, from_email, in_reply_to, email_references, sent_message_id, attachment_storage_paths')
+    .select('id, tracking_id, lead_id, subject, body, from_email, in_reply_to, email_references, sent_message_id, attachment_storage_paths, cc, bcc')
     .eq('status', 'approved')
     .order('created_at', { ascending: true })
     .limit(20)
@@ -344,6 +346,11 @@ export async function pollOutreach() {
       const info = await transport.sendMail({
         from: fromHeader,
         to: recipient,
+        // CC + BCC: nodemailer accepts string | string[] | AddressObject.
+        // We pass arrays; BCC goes on the SMTP envelope only and is
+        // stripped from the visible message per RFC 5322 §3.6.3.
+        ...(row.cc  && row.cc.length  > 0 ? { cc:  row.cc  } : {}),
+        ...(row.bcc && row.bcc.length > 0 ? { bcc: row.bcc } : {}),
         subject: row.subject,
         html,
         text,

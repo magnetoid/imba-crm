@@ -166,6 +166,20 @@ export async function pollImap(settings: RuntimeSettings) {
           const toFirst = Array.isArray(parsed.to)
             ? parsed.to[0]?.value?.[0]?.address ?? null
             : parsed.to?.value?.[0]?.address ?? null
+          // CC/BCC: mailparser returns either a single AddressObject or an
+          // array. Coerce both shapes into a flat string[] of addresses.
+          const flattenAddresses = (a: unknown): string[] => {
+            if (!a) return []
+            const arr = Array.isArray(a) ? a : [a]
+            const out: string[] = []
+            for (const item of arr) {
+              const vals = (item as { value?: Array<{ address?: string }> })?.value ?? []
+              for (const v of vals) if (v.address) out.push(v.address.toLowerCase())
+            }
+            return out
+          }
+          const cc  = flattenAddresses(parsed.cc)
+          const bcc = flattenAddresses(parsed.bcc)
           const subject = parsed.subject ?? null
           // Prefer text/plain. If absent, derive plain text from the HTML
           // part. Falls back to mailparser's textAsHtml-derived text if
@@ -209,6 +223,8 @@ export async function pollImap(settings: RuntimeSettings) {
           const insertedId = await insertInboxMessage({
             from_email: fromAddr,
             to_email: toFirst,
+            cc:  cc.length > 0 ? cc : null,
+            bcc: bcc.length > 0 ? bcc : null,
             subject,
             body,
             received_at: (parsed.date ?? item.internalDate ?? new Date()).toISOString(),

@@ -57,11 +57,25 @@ export async function pollPop3(settings: RuntimeSettings) {
         const toFirst = Array.isArray(parsed.to)
           ? parsed.to[0]?.value?.[0]?.address ?? null
           : parsed.to?.value?.[0]?.address ?? null
+        const flattenAddresses = (a: unknown): string[] => {
+          if (!a) return []
+          const arr = Array.isArray(a) ? a : [a]
+          const out: string[] = []
+          for (const it of arr) {
+            const vals = (it as { value?: Array<{ address?: string }> })?.value ?? []
+            for (const v of vals) if (v.address) out.push(v.address.toLowerCase())
+          }
+          return out
+        }
+        const cc  = flattenAddresses(parsed.cc)
+        const bcc = flattenAddresses(parsed.bcc)
         const subject = parsed.subject ?? null
         const body = parsed.text ?? parsed.html?.toString() ?? ''
         const insertedId = await insertInboxMessage({
           from_email: fromAddr,
           to_email: toFirst,
+          cc:  cc.length > 0 ? cc : null,
+          bcc: bcc.length > 0 ? bcc : null,
           subject,
           body,
           received_at: (parsed.date ?? new Date()).toISOString(),
