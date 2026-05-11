@@ -35,6 +35,29 @@ interface OutreachRow {
   in_reply_to: string | null
   email_references: string[] | null
   sent_message_id: string | null
+  attachment_storage_paths: string[] | null
+}
+
+interface NodemailerAttachment {
+  filename: string
+  content: Buffer
+  contentType?: string
+}
+
+/** Download attachments from the inbox-attachments Storage bucket and
+ *  hand them to nodemailer. Best-effort: a failed download skips that
+ *  attachment but the send still proceeds (operator can re-attach). */
+async function loadOutboundAttachments(paths: string[]): Promise<NodemailerAttachment[]> {
+  if (paths.length === 0) return []
+  const out: NodemailerAttachment[] = []
+  for (const path of paths) {
+    const { data, error } = await supabase.storage.from('inbox-attachments').download(path)
+    if (error || !data) { log('warn', 'attachment download failed', { path, error: error?.message }); continue }
+    const buf = Buffer.from(await data.arrayBuffer())
+    const filename = path.split('/').pop()?.replace(/^\d+_\d+_/, '') ?? 'attachment'
+    out.push({ filename, content: buf })
+  }
+  return out
 }
 
 // Deterministic Message-ID we control end-to-end. nodemailer will set
@@ -208,7 +231,7 @@ export async function pollOutreach() {
   // Pull a small batch each tick so a backlog drains gradually.
   const { data: rows, error } = await supabase
     .from('crm_outreach_emails')
-    .select('id, tracking_id, lead_id, subject, body, from_email, in_reply_to, email_references, sent_message_id')
+    .select('id, tracking_id, lead_id, subject, body, from_email, in_reply_to, email_references, sent_message_id, attachment_storage_paths')
     .eq('status', 'approved')
     .order('created_at', { ascending: true })
     .limit(20)
@@ -314,6 +337,9 @@ export async function pollOutreach() {
       headers['References'] = row.email_references.join(' ')
     }
 
+    // Attachments: download from Storage if the row has any paths.
+    const attachments = await loadOutboundAttachments(row.attachment_storage_paths ?? [])
+
     try {
       const info = await transport.sendMail({
         from: fromHeader,
@@ -323,6 +349,7 @@ export async function pollOutreach() {
         text,
         messageId,
         headers,
+        ...(attachments.length > 0 ? { attachments } : {}),
       })
       await supabase.from('crm_outreach_emails')
         .update({

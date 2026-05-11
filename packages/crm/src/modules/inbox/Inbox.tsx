@@ -38,7 +38,7 @@ import toast from 'react-hot-toast'
 import {
   Inbox as InboxIcon, Loader2, RefreshCw, Send, Sparkles, Wand2, Archive,
   MailQuestion, Reply, Search, Clock, ChevronRight, ChevronDown, Check,
-  AlertCircle, ChevronUp, MessageSquare,
+  AlertCircle, ChevronUp, MessageSquare, Paperclip, Download, X,
 } from 'lucide-react'
 
 interface ThreadRow {
@@ -133,8 +133,11 @@ export default function AIInbox() {
   const [composeBusy, setComposeBusy] = useState(false)
   const [templates, setTemplates] = useState<TemplateRow[]>([])
   const [smtpFromEmail, setSmtpFromEmail] = useState<string | null>(null)
+  const [pendingAttachments, setPendingAttachments] = useState<Array<{ path: string; filename: string; size_bytes: number }>>([])
+  const [uploadingAttachment, setUploadingAttachment] = useState(false)
   const searchRef = useRef<HTMLInputElement | null>(null)
   const composerRef = useRef<HTMLTextAreaElement | null>(null)
+  const attachFileRef = useRef<HTMLInputElement | null>(null)
 
   // ── Initial load + delta fetch ──────────────────────────────────────
   // Cursor = max(last_message_at) of all merged threads, NOT wall-clock.
@@ -241,6 +244,23 @@ export default function AIInbox() {
       setThreads(prev => prev.map(t => t.thread_key === key ? { ...t, unread_count: 0 } : t))
     }
   }, [])
+
+  async function handleAttachFile(file: File) {
+    if (file.size > 25 * 1024 * 1024) { toast.error('25 MB cap on attachments'); return }
+    setUploadingAttachment(true)
+    const safeName = file.name.replace(/[^\w.\-]/g, '_').slice(0, 200)
+    const path = `outbound/${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safeName}`
+    const { error } = await supabase.storage.from('inbox-attachments').upload(path, file, {
+      contentType: file.type || 'application/octet-stream',
+      upsert: false,
+    })
+    setUploadingAttachment(false)
+    if (error) { toast.error(error.message); return }
+    setPendingAttachments(p => [...p, { path, filename: safeName, size_bytes: file.size }])
+  }
+  function removeAttachment(path: string) {
+    setPendingAttachments(p => p.filter(a => a.path !== path))
+  }
 
   async function loadLead(id: string) {
     const { data } = await supabase.from('crm_leads').select('id, name, email, company').eq('id', id).maybeSingle()
@@ -384,6 +404,7 @@ export default function AIInbox() {
       tracking_id: trackingId,
       in_reply_to: lastInboundMessageId,
       email_references: references,
+      attachment_storage_paths: pendingAttachments.length > 0 ? pendingAttachments.map(a => a.path) : null,
     })
     await supabase.from('crm_inbox_messages').insert({
       lead_id: lead?.id ?? null,
@@ -402,11 +423,18 @@ export default function AIInbox() {
         // uses the in_reply_to to attach to the parent's thread.
         in_reply_to: lastInboundMessageId,
         references,
+        attachments: pendingAttachments.map(a => ({
+          filename: a.filename,
+          size_bytes: a.size_bytes,
+          mime: 'application/octet-stream',
+          storage_path: a.path,
+        })),
       },
     })
     setSending(false)
     setDraft('')
     setSuggestions(null)
+    setPendingAttachments([])
     toast.success('Reply queued — outbound worker will send within a minute')
     // Refresh this thread (clears in-memory cache so latest outbound shows).
     MESSAGE_CACHE.delete(selectedKey)
@@ -581,6 +609,33 @@ export default function AIInbox() {
                 className="font-mono text-sm"
               />
 
+              {pendingAttachments.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {pendingAttachments.map(a => (
+                    <span key={a.path} className="inline-flex items-center gap-1.5 px-2 py-1 border border-border rounded-md bg-muted/40 text-xs">
+                      <Paperclip className="h-3 w-3 text-muted-foreground" />
+                      <span className="font-mono truncate max-w-[200px]">{a.filename}</span>
+                      <span className="text-[10px] text-muted-foreground">{formatBytes(a.size_bytes)}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(a.path)}
+                        className="text-muted-foreground hover:text-red-600"
+                        title="Remove"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <input
+                ref={attachFileRef}
+                type="file"
+                className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) void handleAttachFile(f); e.target.value = '' }}
+              />
+
               {/* Toolbar */}
               <div className="flex items-center gap-2 flex-wrap">
                 <Button onClick={() => void fetchSuggestions()} disabled={suggestBusy} size="sm" variant="outline" className="gap-1.5">
@@ -589,6 +644,17 @@ export default function AIInbox() {
                 </Button>
                 <Button onClick={() => setComposePrompt(' ')} size="sm" variant="outline" className="gap-1.5">
                   <Wand2 className="h-3.5 w-3.5 text-primary" /> Write with prompt
+                </Button>
+                <Button
+                  onClick={() => attachFileRef.current?.click()}
+                  disabled={uploadingAttachment}
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  title="Attach file (≤25 MB)"
+                >
+                  {uploadingAttachment ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Paperclip className="h-3.5 w-3.5" />}
+                  Attach
                 </Button>
                 <Select onValueChange={(v) => void rewrite(v)} disabled={rewriteBusy || !draft.trim()}>
                   <SelectTrigger className="h-8 text-xs w-auto px-3 gap-1.5">
@@ -673,10 +739,31 @@ function splitQuoted(body: string): { current: string; quoted: string | null } {
   return { current: current || body.trim(), quoted: quoted || null }
 }
 
+interface AttachmentMeta {
+  filename: string
+  size_bytes: number
+  mime: string
+  storage_path: string
+}
+
 interface MessageCardProps {
   message: MessageRow
   showSuggestion?: boolean
   onUseSuggestion?: (text: string) => void
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+async function openAttachment(path: string) {
+  // Signed URL with 3-minute TTL — enough for the browser to download.
+  const { data, error } = await supabase.storage
+    .from('inbox-attachments').createSignedUrl(path, 180)
+  if (error || !data?.signedUrl) { toast.error(error?.message ?? 'failed to open'); return }
+  window.open(data.signedUrl, '_blank')
 }
 
 function MessageCard({ message, showSuggestion = false, onUseSuggestion }: MessageCardProps) {
@@ -684,6 +771,10 @@ function MessageCard({ message, showSuggestion = false, onUseSuggestion }: Messa
   const [showQuoted, setShowQuoted] = useState(false)
   const isInbound = message.direction === 'inbound'
   const suggestion = message.ai_suggested_reply?.trim() ?? ''
+  const attachments: AttachmentMeta[] = useMemo(() => {
+    const meta = message.metadata as { attachments?: AttachmentMeta[] } | null
+    return Array.isArray(meta?.attachments) ? meta!.attachments! : []
+  }, [message.metadata])
 
   const safeBody = useMemo(() => {
     const raw = message.body ?? ''
@@ -725,6 +816,23 @@ function MessageCard({ message, showSuggestion = false, onUseSuggestion }: Messa
               {showQuoted && (
                 <pre className="mt-2 text-xs whitespace-pre-wrap font-sans text-muted-foreground border-l-2 border-muted pl-3">{quoted}</pre>
               )}
+            </div>
+          )}
+          {attachments.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {attachments.map((a, i) => (
+                <button
+                  key={i}
+                  onClick={() => openAttachment(a.storage_path)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 border border-border rounded-md bg-muted/40 hover:bg-muted/70 text-xs transition-colors"
+                  title={`${a.mime} · ${formatBytes(a.size_bytes)}`}
+                >
+                  <Paperclip className="h-3 w-3 text-muted-foreground" />
+                  <span className="font-mono truncate max-w-[200px]">{a.filename}</span>
+                  <span className="text-[10px] text-muted-foreground">{formatBytes(a.size_bytes)}</span>
+                  <Download className="h-3 w-3 text-muted-foreground" />
+                </button>
+              ))}
             </div>
           )}
           {showSuggestion && suggestion && onUseSuggestion && (

@@ -1,5 +1,5 @@
 import { ImapFlow } from 'imapflow'
-import { simpleParser } from 'mailparser'
+import { simpleParser, type Attachment } from 'mailparser'
 import {
   getProviderSecret,
   insertInboxMessage,
@@ -7,9 +7,53 @@ import {
   updateInboxAI,
   markImapSuccess,
   markImapError,
+  supabase,
   type RuntimeSettings,
 } from './supabase.js'
 import { categorizeInboundMessage, getAISettings } from './ai.js'
+
+const ATTACHMENT_BUCKET = 'inbox-attachments'
+const ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024  // matches the bucket file_size_limit
+
+interface StoredAttachment {
+  filename: string
+  size_bytes: number
+  mime: string
+  storage_path: string
+}
+
+/**
+ * Upload mailparser attachments to Supabase Storage. Keyed by IMAP UID
+ * so re-polls don't collide. Returns the metadata array we persist on
+ * crm_inbox_messages.metadata.attachments.
+ *
+ * Skips attachments larger than 25 MB (bucket limit) and inline images
+ * referenced via cid: (those are already in the HTML body).
+ */
+async function uploadAttachments(uid: number, parts: Attachment[] | undefined): Promise<StoredAttachment[]> {
+  if (!parts || parts.length === 0) return []
+  const out: StoredAttachment[] = []
+  for (const part of parts) {
+    const isInline = part.contentDisposition === 'inline' && !!part.cid
+    if (isInline) continue
+    const buf = part.content as Buffer
+    if (!buf || buf.length === 0) continue
+    if (buf.length > ATTACHMENT_MAX_BYTES) continue
+    const safeName = (part.filename ?? `attachment-${out.length + 1}.bin`).replace(/[^\w.\-]/g, '_').slice(0, 200)
+    const path = `${uid}/${Date.now()}_${out.length}_${safeName}`
+    const { error } = await supabase.storage
+      .from(ATTACHMENT_BUCKET)
+      .upload(path, buf, { contentType: part.contentType ?? 'application/octet-stream', upsert: false })
+    if (error) continue   // best-effort — don't drop the message because of an upload failure
+    out.push({
+      filename: safeName,
+      size_bytes: buf.length,
+      mime: part.contentType ?? 'application/octet-stream',
+      storage_path: path,
+    })
+  }
+  return out
+}
 
 function log(level: 'info' | 'warn' | 'error', msg: string, extra: Record<string, unknown> = {}) {
   console.log(JSON.stringify({ level, msg, source: 'imap', ...extra, time: new Date().toISOString() }))
@@ -158,6 +202,10 @@ export async function pollImap(settings: RuntimeSettings) {
             !!hdr('x-autorespond') ||
             !!hdr('x-autoresponder')
 
+          // Upload attachments BEFORE the insert so the metadata array
+          // already has storage_path entries — single source of truth.
+          const storedAttachments = await uploadAttachments(item.uid, parsed.attachments)
+
           const insertedId = await insertInboxMessage({
             from_email: fromAddr,
             to_email: toFirst,
@@ -167,7 +215,8 @@ export async function pollImap(settings: RuntimeSettings) {
             metadata: {
               imap_uid: item.uid,
               message_id: parsed.messageId,
-              has_attachments: (parsed.attachments?.length ?? 0) > 0,
+              has_attachments: storedAttachments.length > 0,
+              attachments: storedAttachments,
               in_reply_to: parsed.inReplyTo,
               references: parsed.references,
               is_auto_reply: !!isAutoReply,
