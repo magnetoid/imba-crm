@@ -58,6 +58,32 @@ interface RuntimeMail {
   smtp_username: string
   smtp_from_name: string
   smtp_from_email: string
+  smtp_auto_throttle: boolean
+  smtp_max_bounce_rate_pct: number
+}
+
+interface SenderHealth {
+  sender_domain: string
+  total_30d: number
+  sent_30d: number
+  bounced_30d: number
+  complained_30d: number
+}
+
+/** Returns the 30-day bounce rate (0..1) for the configured sender domain.
+ *  Computed from crm_sender_health view (already exists per Phase 10.5).
+ *  Returns null if there's no traffic in the window. */
+async function getBounceRate(settings: RuntimeMail): Promise<{ rate: number; sent: number; bounced: number } | null> {
+  const senderDomain = (settings.smtp_from_email || '').split('@')[1] || 'unknown'
+  const { data } = await supabase
+    .from('crm_sender_health')
+    .select('sender_domain, total_30d, sent_30d, bounced_30d, complained_30d')
+    .eq('sender_domain', senderDomain)
+    .maybeSingle()
+  const row = data as SenderHealth | null
+  if (!row || (row.sent_30d ?? 0) < 20) return null   // not enough traffic to judge
+  const rate = row.sent_30d > 0 ? row.bounced_30d / row.sent_30d : 0
+  return { rate, sent: row.sent_30d, bounced: row.bounced_30d }
 }
 
 function log(level: 'info' | 'warn' | 'error', msg: string, extra: Record<string, unknown> = {}) {
@@ -67,7 +93,7 @@ function log(level: 'info' | 'warn' | 'error', msg: string, extra: Record<string
 async function loadMailSettings(): Promise<RuntimeMail | null> {
   const { data } = await supabase
     .from('crm_runtime_settings')
-    .select('smtp_host, smtp_port, smtp_secure, smtp_username, smtp_from_name, smtp_from_email')
+    .select('smtp_host, smtp_port, smtp_secure, smtp_username, smtp_from_name, smtp_from_email, smtp_auto_throttle, smtp_max_bounce_rate_pct')
     .eq('id', 1)
     .maybeSingle()
   return (data as RuntimeMail | null) ?? null
@@ -152,6 +178,24 @@ export async function pollOutreach() {
   if (!password) {
     log('warn', 'approved outreach exists but provider=smtp credential missing')
     return
+  }
+
+  // Sender-health auto-throttle: if our 30-day bounce rate is over the
+  // configured ceiling, refuse to send anything until the rate decays.
+  // Settings.smtp_auto_throttle defaults to true so this is opt-out, not
+  // opt-in — burning sender reputation in production is irreversible.
+  if (settings.smtp_auto_throttle !== false) {
+    const health = await getBounceRate(settings)
+    const ceiling = (settings.smtp_max_bounce_rate_pct ?? 5) / 100
+    if (health && health.rate > ceiling) {
+      log('warn', 'sender auto-throttled — bounce rate over ceiling', {
+        rate_pct: (health.rate * 100).toFixed(2),
+        ceiling_pct: (ceiling * 100).toFixed(2),
+        sent_30d: health.sent,
+        bounced_30d: health.bounced,
+      })
+      return
+    }
   }
 
   const transport = buildTransport(settings, password)

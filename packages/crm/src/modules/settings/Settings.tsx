@@ -734,7 +734,13 @@ export default function AISettings() {
           <Button variant="outline" onClick={testSmtp} disabled={testingSmtp || !settings.smtp_host || !settings.smtp_username} className="gap-2">{testingSmtp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />} Test SMTP</Button>
         </div>
 
-        <SenderHealthCard inboxHealth={(settings as unknown as { smtp_inbox_health?: SmtpInboxHealth }).smtp_inbox_health ?? null} />
+        <SenderHealthCard
+          inboxHealth={(settings as unknown as { smtp_inbox_health?: SmtpInboxHealth }).smtp_inbox_health ?? null}
+          autoThrottle={(settings as unknown as { smtp_auto_throttle?: boolean }).smtp_auto_throttle ?? true}
+          maxBouncePct={(settings as unknown as { smtp_max_bounce_rate_pct?: number }).smtp_max_bounce_rate_pct ?? 5}
+          onAutoThrottleChange={v => setField('smtp_auto_throttle' as never, v as never)}
+          onMaxBouncePctChange={v => setField('smtp_max_bounce_rate_pct' as never, v as never)}
+        />
       </section>}
 
       {/* ── Inbound mail (IMAP) ─────────────────────────────────── */}
@@ -938,7 +944,21 @@ interface SmtpInboxHealth {
   fetched_at?: string
 }
 
-function SenderHealthCard({ inboxHealth }: { inboxHealth: SmtpInboxHealth | null }) {
+interface SenderHealthCardProps {
+  inboxHealth: SmtpInboxHealth | null
+  autoThrottle: boolean
+  maxBouncePct: number
+  onAutoThrottleChange: (v: boolean) => void
+  onMaxBouncePctChange: (v: number) => void
+}
+
+function SenderHealthCard({
+  inboxHealth,
+  autoThrottle,
+  maxBouncePct,
+  onAutoThrottleChange,
+  onMaxBouncePctChange,
+}: SenderHealthCardProps) {
   const [domainStats, setDomainStats] = useState<Array<{
     sender_domain: string
     total_30d: number
@@ -958,6 +978,12 @@ function SenderHealthCard({ inboxHealth }: { inboxHealth: SmtpInboxHealth | null
 
   const inboxes = inboxHealth?.inboxes ?? []
 
+  // Current throttle state: if any sender domain is over the threshold,
+  // the worker will skip its next outbound batch. Surface that here so
+  // the operator knows mid-day why nothing is sending.
+  const overCeiling = domainStats.some(d => d.sent_30d >= 20 && (d.bounced_30d / d.sent_30d) > maxBouncePct / 100)
+  const throttledNow = autoThrottle && overCeiling
+
   return (
     <div className="mt-6 pt-6 border-t border-border">
       <div className="flex items-center gap-2 mb-1">
@@ -968,6 +994,41 @@ function SenderHealthCard({ inboxHealth }: { inboxHealth: SmtpInboxHealth | null
         Deliverability matters more than features in 2026. Configure MailReach in Integrations and the worker
         refreshes warmup + inbox-placement every 12h.
       </p>
+
+      {/* Throttle controls + current state */}
+      {throttledNow && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3 flex items-start gap-2">
+          <Zap className="h-4 w-4 text-red-700 mt-0.5 flex-shrink-0" />
+          <div className="text-xs text-red-900">
+            <strong>Auto-throttled — no outbound sending right now.</strong> Your 30-day bounce rate is over the
+            configured ceiling ({maxBouncePct}%). Pause outreach, audit the bounce reasons below, then re-enable.
+          </div>
+        </div>
+      )}
+
+      <div className="bg-card border border-border rounded-lg p-4 mb-3 flex items-center gap-4 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Switch checked={autoThrottle} onCheckedChange={onAutoThrottleChange} />
+          <Label className="font-normal text-sm cursor-pointer" onClick={() => onAutoThrottleChange(!autoThrottle)}>
+            Auto-throttle outbound when bounce rate is over
+          </Label>
+        </div>
+        <div className="flex items-center gap-1">
+          <Input
+            type="number"
+            min={1}
+            max={20}
+            step="1"
+            value={maxBouncePct}
+            onChange={e => onMaxBouncePctChange(Math.max(1, Math.min(20, parseInt(e.target.value) || 5)))}
+            className="w-16 text-center"
+          />
+          <span className="text-sm text-muted-foreground">%</span>
+        </div>
+        <p className="text-[11px] text-muted-foreground basis-full">
+          Healthy = ≤2%. Marketing-grade = ≤5%. Anything above 5% degrades sender reputation rapidly.
+        </p>
+      </div>
 
       {/* MailReach panel */}
       <div className="bg-card border border-border rounded-lg p-4 mb-3">
