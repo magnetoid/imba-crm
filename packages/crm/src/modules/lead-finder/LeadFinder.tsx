@@ -198,12 +198,16 @@ function SmartSearchPane() {
       .insert({
         agent_kind: 'lead-finder',
         input: {
-          actor_id: 'apify/google-maps-scraper',
+          // compass/crawler-google-places is the current "Google Maps
+          // Scraper" on Apify. The old apify/google-maps-scraper id no
+          // longer resolves.
+          actor_id: 'compass/crawler-google-places',
           actor_input: {
             searchStringsArray: [searchString],
             maxCrawledPlacesPerSearch: maxResults,
             language: 'en',
             scrapeContacts: true,
+            skipClosedPlaces: true,
           },
           max_save: maxResults,
           auto_enrich: autoEnrich,
@@ -745,7 +749,7 @@ function normalize(s: string) { return s.toLowerCase().replace(/[^a-z0-9]/g, '')
 // Queues a `lead-finder` agent job. The worker picks it up, runs the
 // actor, dedupes by domain, and saves crm_companies + crm_leads.
 function ApifyPane() {
-  const [actorId, setActorId] = useState('apify/google-maps-scraper')
+  const [actorId, setActorId] = useState('compass/crawler-google-places')
   const [maxSave, setMaxSave] = useState(50)
   const [actorInput, setActorInput] = useState('{\n  "searchStringsArray": ["dentist Belgrade"],\n  "maxCrawledPlacesPerSearch": 50\n}')
   const [queueing, setQueueing] = useState(false)
@@ -794,7 +798,7 @@ function ApifyPane() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div className="flex flex-col gap-1.5">
             <Label>Actor ID</Label>
-            <Input value={actorId} onChange={e => setActorId(e.target.value)} placeholder="apify/google-maps-scraper" />
+            <Input value={actorId} onChange={e => setActorId(e.target.value)} placeholder="compass/crawler-google-places" />
             <p className="text-[10px] text-muted-foreground">Paste from <code>apify.com/store/&lt;actor&gt;</code> as <code>username/actor</code>.</p>
           </div>
           <div className="flex flex-col gap-1.5">
