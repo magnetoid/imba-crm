@@ -321,8 +321,12 @@ export default function AIInbox() {
         e.preventDefault(); void openThread(filteredThreads[idx + 1].thread_key)
       } else if (e.key === 'k' && idx > 0) {
         e.preventDefault(); void openThread(filteredThreads[idx - 1].thread_key)
-      } else if (e.key === 'r' && selectedKey) {
-        e.preventDefault(); composerRef.current?.focus()
+      } else if (e.key === 'r' && !e.shiftKey && selectedKey) {
+        e.preventDefault(); startReply()
+      } else if (e.key === 'R' && e.shiftKey && selectedKey) {
+        e.preventDefault(); startReplyAll()
+      } else if (e.key === 'f' && selectedKey) {
+        e.preventDefault(); startForward()
       } else if (e.key === 'e' && selectedKey) {
         e.preventDefault(); void archiveThread()
       }
@@ -390,6 +394,53 @@ export default function AIInbox() {
       if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) seen.add(addr)
     }
     return Array.from(seen)
+  }
+
+  // ── Reply / Reply-All / Forward pre-fill ───────────────────────────
+  // Each prepares the composer fields based on the latest inbound and
+  // (for Forward) the entire thread context. None of them send — they
+  // just stage the draft for the operator to review.
+  function startReply() {
+    composerRef.current?.focus()
+  }
+  function startReplyAll() {
+    const last = [...messages].reverse().find(m => m.direction === 'inbound')
+    if (!last) { composerRef.current?.focus(); return }
+    const mySelf = (smtpFromEmail ?? '').toLowerCase()
+    const dedupe = new Set<string>()
+    const isMine = (a: string) => !!mySelf && a.toLowerCase() === mySelf
+    // CC = original CC + original To (except us + the original sender).
+    const ccCandidates: string[] = []
+    for (const a of last.cc ?? []) ccCandidates.push(a)
+    if (last.to_email) ccCandidates.push(last.to_email)
+    const ccs: string[] = []
+    for (const a of ccCandidates) {
+      const lower = a.toLowerCase()
+      if (isMine(lower) || lower === (last.from_email ?? '').toLowerCase()) continue
+      if (dedupe.has(lower)) continue
+      dedupe.add(lower)
+      ccs.push(a)
+    }
+    setShowCc(ccs.length > 0)
+    setDraftCc(ccs.join(', '))
+    composerRef.current?.focus()
+  }
+  function startForward() {
+    const all = messages
+      .map(m => {
+        const who = m.direction === 'inbound' ? (m.from_email ?? 'them') : (m.from_email ?? 'me')
+        const when = new Date(m.received_at).toLocaleString()
+        const body = (m.body ?? '').slice(0, 5000)
+        return `--- Forwarded ---\nFrom: ${who}\nDate: ${when}\nSubject: ${m.subject ?? '(no subject)'}\n\n${body}`
+      })
+      .join('\n\n')
+    const last = [...messages].reverse().find(m => m.direction === 'inbound')
+    setDraft(all)
+    setDraftSubject(`Fwd: ${(last?.subject ?? messages[0]?.subject ?? '').replace(/^(Re:|Fwd:|Fw:)\s*/i, '').trim() || '(no subject)'}`)
+    setDraftTo('')   // operator must pick a recipient
+    setShowCc(false); setShowBcc(false); setDraftCc(''); setDraftBcc('')
+    composerRef.current?.focus()
+    toast('Enter the recipient in the To: field', { icon: '➡️' })
   }
 
   // ── Send + archive ─────────────────────────────────────────────────
@@ -589,9 +640,20 @@ export default function AIInbox() {
                   <p className="text-xs text-muted-foreground mt-0.5 italic">No lead match</p>
                 )}
               </div>
-              <Button variant="ghost" size="sm" onClick={archiveThread} className="gap-1 h-8">
-                <Archive className="h-3.5 w-3.5" /> Archive
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="sm" onClick={startReply} className="gap-1 h-8" title="Reply (r)">
+                  <Reply className="h-3.5 w-3.5" /> Reply
+                </Button>
+                <Button variant="ghost" size="sm" onClick={startReplyAll} className="gap-1 h-8" title="Reply to all recipients">
+                  <Reply className="h-3.5 w-3.5 scale-x-[-1]" /> Reply all
+                </Button>
+                <Button variant="ghost" size="sm" onClick={startForward} className="gap-1 h-8" title="Forward this thread">
+                  <Send className="h-3.5 w-3.5 rotate-45" /> Forward
+                </Button>
+                <Button variant="ghost" size="sm" onClick={archiveThread} className="gap-1 h-8" title="Archive (e)">
+                  <Archive className="h-3.5 w-3.5" /> Archive
+                </Button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-3">
