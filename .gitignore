@@ -7,3 +7,7 @@ dist
 .DS_Store
 coverage
 .turbo
+
+# Claude Code local settings — user-specific tool allowlist + SSH creds.
+# Project-wide config lives in .claude/settings.json (checked in).
+.claude/settings.local.json
