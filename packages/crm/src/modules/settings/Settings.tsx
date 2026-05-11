@@ -6,6 +6,7 @@ import { Input } from '@imba/shared/ui/input'
 import { Label } from '@imba/shared/ui/label'
 import { Switch } from '@imba/shared/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@imba/shared/ui/select'
+import { Textarea } from '@imba/shared/ui/textarea'
 import toast from 'react-hot-toast'
 import { Settings, Loader2, CheckCircle2, AlertCircle, Mail, Save, Eye, EyeOff, Zap, RefreshCw, BrainCircuit, Inbox } from 'lucide-react'
 
@@ -723,6 +724,36 @@ export default function AISettings() {
           <Switch checked={settings.smtp_secure} onCheckedChange={v => setField('smtp_secure', v)} />
           <Label className="font-normal">Use SSL/TLS (port 465)</Label>
         </div>
+
+        {/* ── Email signature ─────────────────────────────────────────── */}
+        <div className="border-t border-border pt-5 mb-5">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <h3 className="font-medium text-sm">Email signature</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Appended to every outbound email below an RFC 3676 <code>-- </code> delimiter so clients can fold it.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={(settings as unknown as { email_signature_enabled?: boolean }).email_signature_enabled ?? true}
+                onCheckedChange={v => setField('email_signature_enabled' as never, v as never)}
+              />
+              <Label className="font-normal text-xs">Append on every send</Label>
+            </div>
+          </div>
+          <Textarea
+            value={(settings as unknown as { email_signature?: string }).email_signature ?? ''}
+            onChange={e => setField('email_signature' as never, e.target.value as never)}
+            rows={5}
+            placeholder={`Marko Tiosavljevic\nImba Marketing\nhttps://imbaproduction.com\n+381 …`}
+            className="font-mono text-xs"
+          />
+          <p className="text-[10px] text-muted-foreground mt-1">
+            Plain text. The worker auto-detects + skips when an outbound body already includes the first 30 chars (e.g. AI-generated drafts that bake in a sign-off).
+          </p>
+        </div>
+
         {smtpTestResult && (
           <div className={`flex items-center gap-2 text-sm p-3 rounded mb-4 ${smtpTestResult.ok ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
             {smtpTestResult.ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}

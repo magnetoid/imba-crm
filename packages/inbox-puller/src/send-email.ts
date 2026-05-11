@@ -88,6 +88,8 @@ interface RuntimeMail {
   smtp_from_email: string
   smtp_auto_throttle: boolean
   smtp_max_bounce_rate_pct: number
+  email_signature: string | null
+  email_signature_enabled: boolean
 }
 
 interface SenderHealth {
@@ -121,10 +123,28 @@ function log(level: 'info' | 'warn' | 'error', msg: string, extra: Record<string
 async function loadMailSettings(): Promise<RuntimeMail | null> {
   const { data } = await supabase
     .from('crm_runtime_settings')
-    .select('smtp_host, smtp_port, smtp_secure, smtp_username, smtp_from_name, smtp_from_email, smtp_auto_throttle, smtp_max_bounce_rate_pct')
+    .select('smtp_host, smtp_port, smtp_secure, smtp_username, smtp_from_name, smtp_from_email, smtp_auto_throttle, smtp_max_bounce_rate_pct, email_signature, email_signature_enabled')
     .eq('id', 1)
     .maybeSingle()
   return (data as RuntimeMail | null) ?? null
+}
+
+// Append the operator's signature to a body. Plain text and HTML get
+// distinct treatment so the rendered email looks correct in both
+// preview modes. Returns the modified text + html as a tuple.
+function appendSignature(textBody: string, htmlBody: string, sig: string): { text: string; html: string } {
+  // Avoid double-signing — if the operator already typed their sig manually
+  // (common when using AI compose), don't re-append.
+  if (sig && textBody.includes(sig.trim().slice(0, 30))) return { text: textBody, html: htmlBody }
+  const sigText = sig.trim()
+  if (!sigText) return { text: textBody, html: htmlBody }
+  const sigHtml = sigText.split('\n').map(l => `<div>${l.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`).join('')
+  return {
+    text: `${textBody.trimEnd()}\n\n-- \n${sigText}`,
+    // RFC 3676 signature delimiter '-- ' (with trailing space) so mail
+    // clients can fold the signature visually.
+    html: `${htmlBody}<br/><div>-- </div>${sigHtml}`,
+  }
 }
 
 function buildTransport(s: RuntimeMail, password: string): Transporter {
@@ -323,7 +343,10 @@ export async function pollOutreach() {
     const fromHeader = settings.smtp_from_name
       ? `"${settings.smtp_from_name}" <${fromAddr}>`
       : fromAddr
-    const { html, text } = renderBody(row.body, row.tracking_id)
+    let { html, text } = renderBody(row.body, row.tracking_id)
+    if (settings.email_signature_enabled !== false && settings.email_signature) {
+      ({ html, text } = appendSignature(text, html, settings.email_signature))
+    }
 
     // ── RFC 5322 threading headers ────────────────────────────────────
     // - Message-ID: deterministic, lets us match the prospect's reply later.
