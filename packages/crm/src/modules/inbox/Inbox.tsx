@@ -49,6 +49,7 @@ interface ThreadRow {
   message_count: number
   unread_count: number
   has_inbound: boolean
+  last_direction: 'inbound' | 'outbound' | null
   last_from_email: string | null
   first_lead_id: string | null
   latest_ai_category: string | null
@@ -243,7 +244,11 @@ export default function AIInbox() {
   const filteredThreads = useMemo(() => {
     const q = search.trim().toLowerCase()
     return threads.filter(t => {
-      if (tab === 'needs_reply' && (!t.has_inbound || t.unread_count === 0)) return false
+      // "Needs reply" = the latest message in the thread is inbound and
+      // we haven't followed up yet. Read-but-unanswered threads still
+      // belong here — that's the exact case where the operator needs the
+      // nudge most.
+      if (tab === 'needs_reply' && t.last_direction !== 'inbound') return false
       if (tab === 'fyi'        && t.latest_ai_category !== 'fyi') return false
       if (tab === 'sent'       && t.has_inbound) return false
       if (tab === 'snoozed'    && !t.is_snoozed) return false
