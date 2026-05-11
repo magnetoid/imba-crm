@@ -10,7 +10,6 @@ import { module as templates } from './templates'
 import { module as analytics } from './analytics'
 import { module as audit } from './audit'
 import { module as settings } from './settings'
-import { module as seo } from './seo'
 import { module as prompts } from './prompts'
 import { module as siteAnalyzer } from './site-analyzer'
 import { module as agents } from './agents'
@@ -40,7 +39,6 @@ export const MODULES: CRMModule[] = [
   siteAnalyzer,
   agents,
   settings,
-  seo,
 ]
 
 export const GROUPS: { id: CRMModule['group']; label: string }[] = [

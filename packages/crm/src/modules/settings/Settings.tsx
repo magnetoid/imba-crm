@@ -27,12 +27,13 @@ const providerMeta: Array<{
   { provider: 'openrouter', label: 'OpenRouter', modelKey: 'openrouter_model', modelsKey: 'openrouter_models', secretKey: 'openrouter_api_key', placeholder: 'anthropic/claude-sonnet-4' },
 ]
 
-type SettingsTab = 'ai' | 'nomo' | 'integrations' | 'smtp' | 'imap' | 'pop3' | 'caps' | 'company'
+type SettingsTab = 'ai' | 'nomo' | 'integrations' | 'icp' | 'smtp' | 'imap' | 'pop3' | 'caps' | 'company'
 
 const TABS: Array<{ id: SettingsTab; label: string; description: string }> = [
   { id: 'ai',           label: 'AI providers',  description: 'Models, keys, routing and outreach tone' },
   { id: 'nomo',         label: 'Nomo copilot',  description: 'Mode, autopilot allowlist, system prompt' },
   { id: 'integrations', label: 'Integrations',  description: 'Apify, Hunter, Apollo, Browserbase, Cal, Loom…' },
+  { id: 'icp',          label: 'ICP rules',     description: 'Define what a fit-100 lead looks like' },
   { id: 'smtp',         label: 'Outbound mail', description: 'SMTP delivery for outreach + replies' },
   { id: 'imap',         label: 'IMAP inbox',    description: 'Pull messages into the CRM via IMAP' },
   { id: 'pop3',         label: 'POP3 inbox',    description: 'Alternative inbound mail polling' },
@@ -691,6 +692,8 @@ export default function AISettings() {
         </section>
       )}
 
+      {activeTab === 'icp' && <IcpRulesSection />}
+
       {activeTab === 'smtp' && <section className="mb-10">
         <div className="flex items-center gap-2 mb-1">
           <Mail className="h-4 w-4 text-primary" />
@@ -1133,5 +1136,106 @@ function SenderHealthCard({
         )}
       </div>
     </div>
+  )
+}
+
+
+// ── ICP rules section (moved out of Lead Finder so it lives where all
+// other rules live: Settings. Drives fit_score via the lead-scorer
+// agent's daily run).
+interface IcpRulesShape {
+  industries?: string[]
+  countries?: string[]
+  titles_must_match?: string[]
+  tech_must_match?: string[]
+  tech_block?: string[]
+  employee_min?: number
+  employee_max?: number
+}
+
+function IcpRulesSection() {
+  const [rules, setRules] = useState<IcpRulesShape>({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  useEffect(() => { void load() }, [])
+  async function load() {
+    setLoading(true)
+    const { data } = await supabase.from('crm_runtime_settings').select('icp_rules').eq('id', 1).maybeSingle()
+    setRules(((data as { icp_rules?: IcpRulesShape } | null)?.icp_rules) ?? {})
+    setLoading(false)
+  }
+  async function save() {
+    setSaving(true)
+    const { error } = await supabase.from('crm_runtime_settings').update({ icp_rules: rules }).eq('id', 1)
+    setSaving(false)
+    if (error) return toast.error(error.message)
+    toast.success('ICP rules saved — fit_score will recompute on next lead-scorer run.')
+  }
+  const toCsv = (a?: string[]) => (a ?? []).join(', ')
+  const fromCsv = (s: string) => s.split(',').map(x => x.trim()).filter(Boolean)
+  const summary = useMemo(() => {
+    const b: string[] = []
+    if (rules.industries?.length) b.push(`${rules.industries.length} industries`)
+    if (rules.titles_must_match?.length) b.push(`${rules.titles_must_match.length} titles`)
+    if (rules.countries?.length) b.push(`${rules.countries.length} countries`)
+    if (rules.tech_must_match?.length) b.push(`${rules.tech_must_match.length} tech keywords`)
+    if (rules.tech_block?.length) b.push(`${rules.tech_block.length} tech blocked`)
+    if (rules.employee_min || rules.employee_max) b.push(`size ${rules.employee_min ?? 0}-${rules.employee_max ?? '∞'}`)
+    return b.length ? b.join(' · ') : 'No rules yet — every lead scores 50/100 by default.'
+  }, [rules])
+  if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+  return (
+    <section className="mb-10 space-y-5">
+      <div className="flex items-center gap-2 mb-1">
+        <Zap className="h-4 w-4 text-primary" />
+        <h2 className="font-medium">ICP rules</h2>
+      </div>
+      <p className="text-xs text-muted-foreground mb-2">
+        These rules drive <strong>fit_score</strong> (0-100). The Pipeline sorts by fit × intent so the lead the rep should call next floats to the top. Lead Finder also pulls these for its niche + country defaults.
+      </p>
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
+        <AlertCircle className="h-3.5 w-3.5 text-amber-700 mt-0.5 flex-shrink-0" />
+        <div className="text-xs text-amber-900 font-mono">{summary}</div>
+      </div>
+      <div className="bg-card border border-border rounded-lg p-5 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label>Target industries</Label>
+            <Input value={toCsv(rules.industries)} onChange={e => setRules(r => ({ ...r, industries: fromCsv(e.target.value) }))} placeholder="saas, ecommerce, real estate" />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Target countries</Label>
+            <Input value={toCsv(rules.countries)} onChange={e => setRules(r => ({ ...r, countries: fromCsv(e.target.value) }))} placeholder="US, UK, DE, RS" />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Target titles</Label>
+            <Input value={toCsv(rules.titles_must_match)} onChange={e => setRules(r => ({ ...r, titles_must_match: fromCsv(e.target.value) }))} placeholder="founder, ceo, cmo, marketing, head, vp" />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Tech in stack (boost)</Label>
+            <Input value={toCsv(rules.tech_must_match)} onChange={e => setRules(r => ({ ...r, tech_must_match: fromCsv(e.target.value) }))} placeholder="shopify, hubspot, segment" />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Tech blocklist</Label>
+            <Input value={toCsv(rules.tech_block)} onChange={e => setRules(r => ({ ...r, tech_block: fromCsv(e.target.value) }))} placeholder="wordpress.com, wix" />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Employee count range</Label>
+            <div className="flex items-center gap-2">
+              <Input type="number" min={0} value={rules.employee_min ?? 0} onChange={e => setRules(r => ({ ...r, employee_min: Number(e.target.value) || 0 }))} placeholder="min" />
+              <span className="text-muted-foreground">–</span>
+              <Input type="number" min={0} value={rules.employee_max ?? 5000} onChange={e => setRules(r => ({ ...r, employee_max: Number(e.target.value) || 0 }))} placeholder="max" />
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 pt-2">
+          <Button onClick={save} disabled={saving} className="gap-2">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            Save ICP rules
+          </Button>
+          <Button variant="outline" onClick={load} disabled={saving} size="sm">Revert</Button>
+        </div>
+      </div>
+    </section>
   )
 }

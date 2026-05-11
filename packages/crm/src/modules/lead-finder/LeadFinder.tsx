@@ -1,60 +1,52 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '@imba/shared/supabase'
-import { buildCompanyContext, callAIJSON, getCRMRuntimeSettings } from '@imba/shared/lib/ai'
 import { Button } from '@imba/shared/ui/button'
 import { Input } from '@imba/shared/ui/input'
 import { Label } from '@imba/shared/ui/label'
-import { Badge } from '@imba/shared/ui/badge'
 import { Textarea } from '@imba/shared/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@imba/shared/ui/select'
-import { Separator } from '@imba/shared/ui/separator'
 import { Switch } from '@imba/shared/ui/switch'
 import toast from 'react-hot-toast'
 import {
-  Search, Sparkles, Loader2, Building2, Mail, Globe, Phone, CheckCircle2, Plus,
-  Download, Star, Target, History, FileSpreadsheet, Bot, Sliders, AlertCircle,
-  MapPin, Zap, Trash2, ExternalLink,
+  Search, Sparkles, Loader2, Building2, Mail, Globe, Phone, CheckCircle2,
+  Target, FileSpreadsheet, Bot, AlertCircle,
+  MapPin, Zap, Trash2, ExternalLink, Download,
 } from 'lucide-react'
-import { autoScoreLead, logActivity } from '@/lib/crm-utils'
-import { logGeneration } from '@/lib/aiGenerations'
 
-interface DiscoveredLead {
-  company_name: string
-  contact_name: string
-  email: string
-  phone: string
-  website: string
-  industry: string
-  company_size: string
-  ai_score: number
-  ai_summary: string
-}
-
-const INDUSTRIES = ['E-commerce & Retail', 'SaaS & Tech', 'Real Estate', 'Healthcare', 'Food & Beverage', 'Fashion & Beauty', 'Education & eLearning', 'Finance & Fintech', 'Hospitality & Travel', 'Manufacturing', 'Non-Profit', 'Legal & Professional Services', 'Entertainment & Media']
-const SIZES = ['1–10', '11–50', '51–200', '201–500', '500+']
-const GOALS = ['brand awareness', 'product launch', 'lead generation', 'investor pitch', 'social media content', 'eLearning / training']
-
-type Tab = 'smart' | 'ai' | 'csv' | 'apify' | 'icp'
+type Tab = 'search' | 'csv' | 'apify'
 
 const TABS: Array<{ id: Tab; label: string; icon: typeof Sparkles; description: string }> = [
-  { id: 'smart', label: 'Smart search', icon: Zap,            description: 'Real prospects from Google Maps + auto-enriched emails' },
-  { id: 'ai',    label: 'AI brainstorm', icon: Sparkles,      description: 'LLM-imagined prospects (not verified)' },
-  { id: 'csv',   label: 'CSV import',  icon: FileSpreadsheet, description: 'Paste a list from anywhere' },
-  { id: 'apify', label: 'Apify advanced', icon: Bot,          description: 'Raw Apify actor + JSON input' },
-  { id: 'icp',   label: 'ICP rules',   icon: Sliders,         description: 'Define what a fit-100 lead looks like' },
+  { id: 'search', label: 'Search',      icon: Zap,            description: 'Real prospects from Google Maps + auto-enriched emails' },
+  { id: 'csv',    label: 'CSV import',  icon: FileSpreadsheet, description: 'Paste a list from anywhere' },
+  { id: 'apify',  label: 'Advanced',    icon: Bot,            description: 'Raw Apify actor + JSON input (power users)' },
 ]
 
 export default function AILeadSearcher() {
   const [tab, setTab] = useState<Tab>(() => {
-    if (typeof window === 'undefined') return 'smart'
+    if (typeof window === 'undefined') return 'search'
     const h = window.location.hash.replace('#', '') as Tab
-    return TABS.some(t => t.id === h) ? h : 'smart'
+    return TABS.some(t => t.id === h) ? h : 'search'
   })
+  // Power-user toggle reveals the "Advanced" tab. Off by default — the
+  // ~1% of operators who need raw Apify JSON can flip it on.
+  const [showAdvanced, setShowAdvanced] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return localStorage.getItem('lead_finder_show_advanced') === '1'
+  })
+  useEffect(() => {
+    try { localStorage.setItem('lead_finder_show_advanced', showAdvanced ? '1' : '0') } catch { /* */ }
+  }, [showAdvanced])
   useEffect(() => {
     if (typeof window !== 'undefined' && window.location.hash !== `#${tab}`) {
       window.history.replaceState(null, '', `#${tab}`)
     }
   }, [tab])
+  // If user toggles off Advanced while on the Apify tab, bounce back to Search.
+  useEffect(() => {
+    if (!showAdvanced && tab === 'apify') setTab('search')
+  }, [showAdvanced, tab])
+
+  const visibleTabs = TABS.filter(t => t.id !== 'apify' || showAdvanced)
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -63,12 +55,12 @@ export default function AILeadSearcher() {
         <h1 className="text-2xl font-semibold tracking-tight">Lead Finder</h1>
       </div>
       <p className="text-muted-foreground text-sm mb-6">
-        Build your prospect list four ways: imagine with AI, paste a CSV, run a real-search actor, or sharpen the ICP rules that score every lead.
+        Find real prospects on Google Maps (with auto-enriched emails), or paste a list you already have. ICP rules + scoring live in <a href="/admin/crm/settings#icp" className="text-primary hover:underline">Settings → ICP rules</a>.
       </p>
 
       {/* Tab nav */}
-      <div className="flex flex-wrap gap-1 mb-8 border-b border-border">
-        {TABS.map(t => {
+      <div className="flex flex-wrap items-center gap-1 mb-8 border-b border-border">
+        {visibleTabs.map(t => {
           const Icon = t.icon
           const active = tab === t.id
           return (
@@ -86,13 +78,21 @@ export default function AILeadSearcher() {
             </button>
           )
         })}
+        <div className="flex-1" />
+        <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer">
+          <input
+            type="checkbox"
+            checked={showAdvanced}
+            onChange={e => setShowAdvanced(e.target.checked)}
+            className="accent-primary"
+          />
+          Power user
+        </label>
       </div>
 
-      {tab === 'smart' && <SmartSearchPane />}
-      {tab === 'ai'    && <AISearchPane />}
-      {tab === 'csv'   && <CsvImportPane />}
-      {tab === 'apify' && <ApifyPane />}
-      {tab === 'icp'   && <IcpRulesPane />}
+      {tab === 'search' && <SmartSearchPane />}
+      {tab === 'csv'    && <CsvImportPane />}
+      {tab === 'apify'  && <ApifyPane />}
     </div>
   )
 }
@@ -126,6 +126,25 @@ interface RecentJob {
   input: Record<string, unknown>
 }
 
+// Curated niche presets — one tap instead of "what do I type here?".
+// Covers the 90% of B2B prospecting hops Google Maps reliably returns
+// for. Each entry has the emoji + the actual search keyword that
+// flows into the actor's searchStringsArray.
+const NICHE_PRESETS: Array<{ emoji: string; label: string; keyword: string }> = [
+  { emoji: '💼', label: 'Marketing agency',  keyword: 'marketing agency' },
+  { emoji: '🦷', label: 'Dentist',           keyword: 'dentist' },
+  { emoji: '🏠', label: 'Real estate',       keyword: 'real estate agency' },
+  { emoji: '⚖️', label: 'Law firm',           keyword: 'law firm' },
+  { emoji: '🍴', label: 'Restaurant',         keyword: 'restaurant' },
+  { emoji: '💪', label: 'Gym',                keyword: 'gym' },
+  { emoji: '🏨', label: 'Hotel',              keyword: 'hotel' },
+  { emoji: '💼', label: 'Accountant',         keyword: 'accountant' },
+  { emoji: '🚗', label: 'Car dealer',         keyword: 'car dealership' },
+  { emoji: '💇', label: 'Salon / spa',        keyword: 'beauty salon' },
+  { emoji: '🏥', label: 'Medical clinic',     keyword: 'medical clinic' },
+  { emoji: '🎬', label: 'Production company', keyword: 'video production company' },
+]
+
 function SmartSearchPane() {
   const [niche, setNiche]         = useState('')
   const [city, setCity]           = useState('')
@@ -138,19 +157,67 @@ function SmartSearchPane() {
   const [searchStartedAt, setSearchStartedAt] = useState<string | null>(null)
   const [results, setResults] = useState<FoundLead[]>([])
   const [apifyConfigured, setApifyConfigured] = useState<boolean | null>(null)
+  const [recentJobs, setRecentJobs] = useState<RecentJob[]>([])
+  const [elapsedSec, setElapsedSec] = useState(0)
 
-  // ── Load ICP rules + check Apify creds ────────────────────────────
+  // ── Load ICP rules + check Apify creds + recent jobs ──────────────
+  const loadRecentJobs = useCallback(async () => {
+    const { data } = await supabase
+      .from('crm_agent_jobs')
+      .select('id, status, output, error, created_at, input')
+      .eq('agent_kind', 'lead-finder')
+      .eq('triggered_by', 'smart-search')
+      .order('created_at', { ascending: false })
+      .limit(6)
+    setRecentJobs((data as RecentJob[] | null) ?? [])
+  }, [])
   useEffect(() => {
     void (async () => {
       const { data } = await supabase.from('crm_runtime_settings').select('icp_rules').eq('id', 1).maybeSingle()
       setIcp(((data as { icp_rules?: IcpRulesLite } | null)?.icp_rules) ?? null)
-      // Provider credentials are RLS-restricted to service_role — read
-      // through the security-definer RPC instead.
       const { data: providers } = await supabase.rpc('list_provider_credentials')
       const apify = (providers as Array<{ provider: string; has_key: boolean }> | null)?.find(p => p.provider === 'apify')
       setApifyConfigured(!!apify?.has_key)
+      void loadRecentJobs()
     })()
-  }, [])
+  }, [loadRecentJobs])
+
+  // Elapsed-time ticker while a search is in flight. Updates the status
+  // banner so the operator sees the apify run progressing, not a frozen
+  // spinner.
+  useEffect(() => {
+    if (!activeJob || ['finished', 'failed', 'cancelled'].includes(activeJob.status)) {
+      setElapsedSec(0); return
+    }
+    const start = new Date(activeJob.created_at).getTime()
+    const t = setInterval(() => setElapsedSec(Math.floor((Date.now() - start) / 1000)), 1000)
+    return () => clearInterval(t)
+  }, [activeJob])
+
+  // Use ICP defaults — pre-fills niche + country from the saved ICP rules.
+  function useIcpDefaults() {
+    if (!icp) { toast('Set ICP rules in Settings first', { icon: 'ℹ️' }); return }
+    const firstIndustry = icp.industries?.[0]
+    const firstCountry  = icp.countries?.[0]
+    if (firstIndustry) setNiche(firstIndustry)
+    if (firstCountry)  setCountry(firstCountry)
+    if (!firstIndustry && !firstCountry) toast('Your ICP has no industries or countries yet')
+    else toast.success(`Pre-filled from ICP: ${[firstIndustry, firstCountry].filter(Boolean).join(' / ')}`)
+  }
+
+  // Re-run a previous search by lifting its criteria back into the form.
+  function rerunFromHistory(j: RecentJob) {
+    const ai = (j.input.actor_input as { searchStringsArray?: string[] } | undefined)
+    const search = ai?.searchStringsArray?.[0] ?? ''
+    if (!search) { toast.error('Could not parse this run'); return }
+    // The string is "<niche> <city> <country>" joined by spaces; we just
+    // dump it into the niche field so the operator can split it manually
+    // — simpler than trying to reverse-engineer the parts.
+    setNiche(search)
+    setCity('')
+    setCountry('')
+    toast.success('Loaded criteria — adjust and search again')
+  }
 
   // ── Poll active job until finished, then load saved leads ─────────
   useEffect(() => {
@@ -179,8 +246,9 @@ function SmartSearchPane() {
         .order('created_at', { ascending: false })
         .limit(200)
       setResults((data as FoundLead[] | null) ?? [])
+      void loadRecentJobs()      // surface this run in history immediately
     })()
-  }, [activeJob, searchStartedAt])
+  }, [activeJob, searchStartedAt, loadRecentJobs])
 
   async function search() {
     if (!niche.trim()) return toast.error('Niche / industry required.')
@@ -237,26 +305,55 @@ function SmartSearchPane() {
   return (
     <div className="space-y-6">
       {/* Banner */}
-      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 flex items-start gap-3">
+      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 flex items-start gap-2.5">
         <Zap className="h-4 w-4 text-emerald-700 mt-0.5 flex-shrink-0" />
-        <div className="text-xs text-emerald-900">
-          <strong>Real prospects, not LLM guesses.</strong> Smart search runs the <code>apify/google-maps-scraper</code> actor
-          for your niche + location, dedupes by domain, saves to your CRM, and (with auto-enrich on) fans out
-          <code> lead-enricher</code> jobs to find verified emails via Hunter + person details via Apollo.
-        </div>
+        <p className="text-xs text-emerald-900">
+          <strong>Real prospects from Google Maps.</strong> Pick a niche + location → we scrape, dedupe, save real businesses (with phone + website). Auto-enrich finds the verified email + decision-maker title.
+        </p>
       </div>
 
       {apifyConfigured === false && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
           <AlertCircle className="h-4 w-4 text-amber-700 mt-0.5 flex-shrink-0" />
           <div className="text-xs text-amber-900">
-            No Apify API key found. Go to <strong>Settings → AI providers</strong>, pick <code>apify</code>, and paste your token. Free tier covers ~$5/mo of actor runs.
+            No Apify API key found. Go to <a href="/admin/crm/settings#integrations" className="font-semibold underline">Settings → Integrations</a>, pick <code>apify</code>, and paste your token. Free tier covers ~$5/mo of actor runs.
           </div>
         </div>
       )}
 
       {/* Form */}
       <div className="bg-card border border-border rounded-lg p-6 shadow-sm">
+        {/* Quick-pick niche presets — one tap fills the field. */}
+        <div className="mb-5">
+          <div className="flex items-center justify-between mb-2">
+            <Label className="text-[11px] uppercase tracking-wider text-muted-foreground">Quick picks</Label>
+            <button
+              type="button"
+              onClick={useIcpDefaults}
+              className="text-[11px] text-primary hover:underline inline-flex items-center gap-1"
+              title="Pre-fill from your ICP rules (Settings → ICP)"
+            >
+              <Sparkles className="h-3 w-3" /> Use my ICP defaults
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {NICHE_PRESETS.map(p => (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() => setNiche(p.keyword)}
+                className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                  niche.toLowerCase() === p.keyword.toLowerCase()
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-card border-border text-muted-foreground hover:border-primary/40 hover:text-foreground'
+                }`}
+              >
+                <span className="mr-1">{p.emoji}</span>{p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
           <div className="flex flex-col gap-1.5 lg:col-span-2">
             <Label>Niche / industry *</Label>
@@ -268,14 +365,7 @@ function SmartSearchPane() {
             />
             <datalist id="niche-suggestions">
               {(icp?.industries ?? []).map(i => <option key={i} value={i} />)}
-              <option value="dentist" />
-              <option value="marketing agency" />
-              <option value="real estate agency" />
-              <option value="restaurant" />
-              <option value="law firm" />
-              <option value="accounting firm" />
-              <option value="hotel" />
-              <option value="gym" />
+              {NICHE_PRESETS.map(p => <option key={p.keyword} value={p.keyword} />)}
             </datalist>
           </div>
           <div className="flex flex-col gap-1.5">
@@ -335,6 +425,13 @@ function SmartSearchPane() {
             {failed && <AlertCircle className="h-4 w-4 text-red-700" />}
             <span className="font-mono text-xs">job {activeJob.id.slice(0, 8)}</span>
             <span>{activeJob.status}</span>
+            {isRunning && (
+              <>
+                <span className="text-muted-foreground">·</span>
+                <span className="font-mono">{elapsedSec}s elapsed</span>
+                <span className="text-muted-foreground italic">— scraping Google Maps, dedup, save…</span>
+              </>
+            )}
             {finished && (
               <>
                 <span className="text-muted-foreground">·</span>
@@ -343,6 +440,34 @@ function SmartSearchPane() {
               </>
             )}
             {failed && activeJob.error && <span className="text-red-700 truncate max-w-md">{activeJob.error}</span>}
+          </div>
+        </div>
+      )}
+
+      {/* Recent searches — re-run with one click */}
+      {recentJobs.length > 0 && results.length === 0 && !activeJob && (
+        <div className="bg-card border border-border rounded-lg p-4 shadow-sm">
+          <p className="text-[11px] uppercase tracking-wider text-muted-foreground mb-3">Recent searches</p>
+          <div className="space-y-1.5">
+            {recentJobs.map(j => {
+              const ai = j.input.actor_input as { searchStringsArray?: string[] } | undefined
+              const q = ai?.searchStringsArray?.[0] ?? '(no query)'
+              const o = (j.output ?? {}) as { saved?: { leads?: number } }
+              const saved = o?.saved?.leads ?? 0
+              return (
+                <button
+                  key={j.id}
+                  onClick={() => rerunFromHistory(j)}
+                  className="w-full flex items-center gap-3 text-left text-xs p-2 rounded hover:bg-muted/60 transition-colors group"
+                >
+                  <StatusDot status={j.status} />
+                  <span className="flex-1 truncate font-mono">{q}</span>
+                  {saved > 0 && <span className="text-emerald-700 font-mono">{saved} saved</span>}
+                  <span className="text-muted-foreground/70 text-[10px]">{new Date(j.created_at).toLocaleDateString()}</span>
+                  <span className="text-[10px] text-primary opacity-0 group-hover:opacity-100">Re-run →</span>
+                </button>
+              )
+            })}
           </div>
         </div>
       )}
@@ -409,169 +534,6 @@ function SmartSearchPane() {
         </div>
       )}
     </div>
-  )
-}
-
-// ── 1. AI search (legacy LLM-imagine flow) ────────────────────────────
-function AISearchPane() {
-  const [loading, setLoading] = useState(false)
-  const [results, setResults] = useState<DiscoveredLead[]>([])
-  const [importingAll, setImportingAll] = useState(false)
-  const [imported, setImported] = useState<Set<number>>(new Set())
-  const [searchHistory, setSearchHistory] = useState<{ label: string; count: number; date: string }[]>([])
-  const [criteria, setCriteria] = useState({ industry: '', location: '', size: '', videoGoal: '', keywords: '', count: '10' })
-
-  const loadHistory = useCallback(async () => {
-    const { data } = await supabase.from('crm_ai_settings').select('value').eq('key', 'lead_search_history').maybeSingle()
-    if (data?.value) setSearchHistory((data.value as { searches: typeof searchHistory }).searches || [])
-  }, [])
-  useEffect(() => { void loadHistory() }, [loadHistory])
-
-  async function search() {
-    if (!criteria.industry) return toast.error('Select an industry.')
-    setLoading(true); setResults([]); setImported(new Set())
-    const runtime = await getCRMRuntimeSettings()
-    const prompt = `You are a B2B lead researcher for ${runtime.company_name || 'our team'}.\n${buildCompanyContext(runtime)}\n\nGenerate ${criteria.count} realistic prospecting leads. Prefer plausible targets with clear reasons they may need our services.\n\nCriteria:\n- Industry: ${criteria.industry}\n- Location: ${criteria.location || 'Global / US / Europe'}\n- Company size: ${criteria.size || 'Any'}\n- Goal: ${criteria.videoGoal || 'Brand awareness'}\n- Keywords: ${criteria.keywords || 'growth-stage, digital-first'}\n\nReturn ONLY valid JSON array:\n[{"company_name":"string","contact_name":"string","email":"string","phone":"string","website":"string","industry":"string","company_size":"string","ai_score":75,"ai_summary":"string"}]`
-    try {
-      const leads = await callAIJSON<DiscoveredLead[]>(prompt, { maxTokens: 1800 })
-      setResults(leads)
-      const entry = { label: `${criteria.industry} · ${criteria.location || 'Global'}`, count: leads.length, date: new Date().toISOString() }
-      const next = [entry, ...searchHistory].slice(0, 8)
-      setSearchHistory(next)
-      await supabase.from('crm_ai_settings').upsert({ key: 'lead_search_history', value: { searches: next } })
-      void logGeneration({ feature: 'lead_search', taskType: 'research', input: prompt, output: JSON.stringify(leads), inputMeta: { criteria }, provider: runtime.active_ai_provider, model: runtime.active_ai_model })
-      toast.success(`Found ${leads.length} leads`)
-    } catch (error) {
-      void logGeneration({ feature: 'lead_search', taskType: 'research', input: prompt, error: error instanceof Error ? error.message : String(error), inputMeta: { criteria } })
-      toast.error(error instanceof Error ? error.message : 'AI search failed')
-    }
-    setLoading(false)
-  }
-
-  async function insertLead(lead: DiscoveredLead): Promise<{ ok: boolean; id?: string; err?: string }> {
-    const { data: inserted, error } = await supabase.from('crm_leads').insert({
-      name: lead.contact_name || lead.company_name,
-      company: lead.company_name,
-      email: lead.email,
-      phone: lead.phone,
-      website: lead.website,
-      service_interest: 'Video production',
-      notes: `Industry: ${lead.industry || 'N/A'} | Company size: ${lead.company_size || 'N/A'}\n${lead.ai_summary || ''}`.trim(),
-      ai_score: lead.ai_score,
-      ai_notes: lead.ai_summary,
-      source: 'ai_search',
-      stage: 'new',
-      probability: Math.min(100, Math.max(0, lead.ai_score || 50)),
-    }).select('id, name, company, service_interest, source, notes').single()
-    if (error) return { ok: false, err: error.message }
-    if (inserted) {
-      logActivity(inserted.id, 'note', 'Imported from AI Lead Finder', lead.ai_summary || '')
-      autoScoreLead(inserted).catch(() => {})
-    }
-    return { ok: true, id: inserted?.id }
-  }
-
-  async function importLead(lead: DiscoveredLead, idx: number) {
-    const r = await insertLead(lead)
-    if (!r.ok) return toast.error(`Failed: ${r.err}`)
-    setImported(p => new Set([...p, idx]))
-    toast.success(`${lead.company_name} added to CRM`)
-  }
-
-  async function importAll() {
-    setImportingAll(true)
-    let count = 0
-    for (let i = 0; i < results.length; i++) {
-      if (imported.has(i)) continue
-      const r = await insertLead(results[i])
-      if (r.ok) { setImported(p => new Set([...p, i])); count++ }
-    }
-    toast.success(`${count} leads imported to CRM`)
-    setImportingAll(false)
-  }
-
-  const scoreColor = (s: number) => s >= 80 ? 'text-emerald-600' : s >= 60 ? 'text-amber-600' : 'text-muted-foreground'
-
-  return (
-    <>
-      <div className="bg-card border border-border rounded-lg p-6 mb-8 shadow-sm">
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
-          <div className="flex flex-col gap-1.5"><Label>Industry *</Label><Select value={criteria.industry} onValueChange={v => setCriteria(p => ({ ...p, industry: v }))}><SelectTrigger><SelectValue placeholder="Select industry" /></SelectTrigger><SelectContent>{INDUSTRIES.map(i => <SelectItem key={i} value={i}>{i}</SelectItem>)}</SelectContent></Select></div>
-          <div className="flex flex-col gap-1.5"><Label>Location</Label><Input value={criteria.location} onChange={e => setCriteria(p => ({ ...p, location: e.target.value }))} placeholder="US, Germany, UK…" /></div>
-          <div className="flex flex-col gap-1.5"><Label>Company size</Label><Select value={criteria.size} onValueChange={v => setCriteria(p => ({ ...p, size: v }))}><SelectTrigger><SelectValue placeholder="Any size" /></SelectTrigger><SelectContent>{SIZES.map(s => <SelectItem key={s} value={s}>{s} employees</SelectItem>)}</SelectContent></Select></div>
-          <div className="flex flex-col gap-1.5"><Label>Goal</Label><Select value={criteria.videoGoal} onValueChange={v => setCriteria(p => ({ ...p, videoGoal: v }))}><SelectTrigger><SelectValue placeholder="Any goal" /></SelectTrigger><SelectContent>{GOALS.map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}</SelectContent></Select></div>
-          <div className="flex flex-col gap-1.5"><Label>Keywords</Label><Input value={criteria.keywords} onChange={e => setCriteria(p => ({ ...p, keywords: e.target.value }))} placeholder="startup, DTC, B2B…" /></div>
-          <div className="flex flex-col gap-1.5"><Label>Number of leads</Label><Select value={criteria.count} onValueChange={v => setCriteria(p => ({ ...p, count: v }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{['5', '10', '15', '20'].map(n => <SelectItem key={n} value={n}>{n} leads</SelectItem>)}</SelectContent></Select></div>
-        </div>
-        <Button onClick={search} disabled={loading} className="gap-2">
-          {loading ? <><Loader2 className="h-4 w-4 animate-spin" />Searching…</> : <><Sparkles className="h-4 w-4" />Find leads with AI</>}
-        </Button>
-        <p className="text-[11px] text-muted-foreground mt-3">
-          Heads-up: AI search synthesises *plausible* prospects — they're a starting point, not verified contacts. For verified data use Real search (Apify) or CSV import.
-        </p>
-      </div>
-
-      {results.length > 0 && (
-        <>
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-sm text-muted-foreground">{results.length} leads found · {imported.size} imported</p>
-            <Button variant="outline" size="sm" onClick={importAll} disabled={importingAll || imported.size === results.length} className="gap-2">
-              {importingAll ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-              Import all to CRM
-            </Button>
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {results.map((lead, i) => (
-              <div key={i} className={`bg-card border rounded-lg p-5 shadow-sm transition-all ${imported.has(i) ? 'border-emerald-300 bg-emerald-50/40' : 'border-border hover:border-primary/40'}`}>
-                <div className="flex items-start justify-between gap-3 mb-3">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="w-9 h-9 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0"><Building2 className="h-4 w-4 text-primary" /></div>
-                    <div className="min-w-0">
-                      <p className="font-medium text-sm truncate">{lead.company_name}</p>
-                      <p className="text-xs text-muted-foreground truncate">{lead.contact_name}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1"><Star className={`h-3.5 w-3.5 ${scoreColor(lead.ai_score)}`} /><span className={`text-sm font-mono font-medium ${scoreColor(lead.ai_score)}`}>{lead.ai_score}</span></div>
-                    {imported.has(i)
-                      ? <Badge variant="outline" className="text-emerald-700 border-emerald-300 text-xs gap-1"><CheckCircle2 className="h-3 w-3" /> Imported</Badge>
-                      : <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => importLead(lead, i)}><Plus className="h-3 w-3" /> Import</Button>}
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-3 text-xs text-muted-foreground mb-3">
-                  {lead.email   && <span className="flex items-center gap-1"><Mail   className="h-3 w-3" />{lead.email}</span>}
-                  {lead.website && <span className="flex items-center gap-1"><Globe  className="h-3 w-3" />{lead.website}</span>}
-                  {lead.phone   && <span className="flex items-center gap-1"><Phone  className="h-3 w-3" />{lead.phone}</span>}
-                </div>
-                <div className="flex gap-2 mb-3">
-                  <Badge variant="secondary" className="text-xs">{lead.industry}</Badge>
-                  {lead.company_size && <Badge variant="secondary" className="text-xs">{lead.company_size} employees</Badge>}
-                </div>
-                <p className="text-xs text-muted-foreground leading-relaxed">{lead.ai_summary}</p>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-
-      {searchHistory.length > 0 && results.length === 0 && !loading && (
-        <div className="mt-8">
-          <Separator className="mb-6" />
-          <div className="flex items-center gap-2 mb-4">
-            <History className="h-3.5 w-3.5 text-muted-foreground" />
-            <p className="text-xs font-mono tracking-widest uppercase text-muted-foreground/60">Recent searches</p>
-          </div>
-          <div className="flex flex-col gap-2">
-            {searchHistory.map((s, i) => (
-              <div key={i} className="flex items-center justify-between text-sm text-muted-foreground bg-card border border-border rounded px-3 py-2">
-                <span className="flex items-center gap-2"><Search className="h-3.5 w-3.5" />{s.label}</span>
-                <span className="text-xs font-mono">{s.count} leads · {new Date(s.date).toLocaleDateString()}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </>
   )
 }
 
@@ -852,106 +814,3 @@ function StatusDot({ status }: { status: string }) {
   return <span className={`inline-block w-2 h-2 rounded-full ${c}`} />
 }
 
-// ── 4. ICP rules editor ──────────────────────────────────────────────
-// Edits crm_runtime_settings.icp_rules — the same JSON the lead-scorer
-// agent reads to compute fit_score on every lead.
-interface IcpRules {
-  industries?: string[]
-  employee_min?: number
-  employee_max?: number
-  countries?: string[]
-  titles_must_match?: string[]
-  tech_must_match?: string[]
-  tech_block?: string[]
-}
-
-function IcpRulesPane() {
-  const [rules, setRules] = useState<IcpRules>({})
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => { void load() }, [])
-
-  async function load() {
-    setLoading(true)
-    const { data } = await supabase.from('crm_runtime_settings').select('icp_rules').eq('id', 1).maybeSingle()
-    setRules(((data as { icp_rules?: IcpRules } | null)?.icp_rules) ?? {})
-    setLoading(false)
-  }
-
-  async function save() {
-    setSaving(true)
-    const { error } = await supabase.from('crm_runtime_settings').update({ icp_rules: rules }).eq('id', 1)
-    setSaving(false)
-    if (error) return toast.error(error.message)
-    toast.success('ICP rules saved — fit_score will recompute on next lead-scorer run.')
-  }
-
-  function toCsv(arr: string[] | undefined): string { return (arr ?? []).join(', ') }
-  function fromCsv(s: string): string[] { return s.split(',').map(x => x.trim()).filter(Boolean) }
-
-  const summary = useMemo(() => {
-    const bits: string[] = []
-    if (rules.industries?.length)        bits.push(`${rules.industries.length} industries`)
-    if (rules.titles_must_match?.length) bits.push(`${rules.titles_must_match.length} target titles`)
-    if (rules.countries?.length)         bits.push(`${rules.countries.length} countries`)
-    if (rules.tech_must_match?.length)   bits.push(`${rules.tech_must_match.length} tech keywords`)
-    if (rules.tech_block?.length)        bits.push(`${rules.tech_block.length} tech blocked`)
-    if (rules.employee_min || rules.employee_max) bits.push(`size ${rules.employee_min ?? 0}-${rules.employee_max ?? '∞'}`)
-    return bits.length ? bits.join(' · ') : 'No rules yet — every lead scores 50/100 by default.'
-  }, [rules])
-
-  if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-
-  return (
-    <div className="space-y-6">
-      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
-        <AlertCircle className="h-4 w-4 text-amber-700 mt-0.5 flex-shrink-0" />
-        <div className="text-xs text-amber-900">
-          These rules drive <strong>fit_score</strong> (0–100). The Pipeline sorts by fit × intent so the lead the rep should call next floats to the top.
-          <div className="mt-1 font-mono">{summary}</div>
-        </div>
-      </div>
-
-      <div className="bg-card border border-border rounded-lg p-6 shadow-sm space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label>Target industries (comma-separated)</Label>
-            <Input value={toCsv(rules.industries)} onChange={e => setRules(r => ({ ...r, industries: fromCsv(e.target.value) }))} placeholder="saas, ecommerce, real estate" />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label>Target countries</Label>
-            <Input value={toCsv(rules.countries)} onChange={e => setRules(r => ({ ...r, countries: fromCsv(e.target.value) }))} placeholder="US, UK, DE, RS" />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label>Target titles (must match)</Label>
-            <Input value={toCsv(rules.titles_must_match)} onChange={e => setRules(r => ({ ...r, titles_must_match: fromCsv(e.target.value) }))} placeholder="founder, ceo, cmo, marketing, head, vp" />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label>Tech in stack (boost)</Label>
-            <Input value={toCsv(rules.tech_must_match)} onChange={e => setRules(r => ({ ...r, tech_must_match: fromCsv(e.target.value) }))} placeholder="shopify, hubspot, segment" />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label>Tech blocklist (auto-disqualify)</Label>
-            <Input value={toCsv(rules.tech_block)} onChange={e => setRules(r => ({ ...r, tech_block: fromCsv(e.target.value) }))} placeholder="wordpress.com, wix" />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label>Employee count range</Label>
-            <div className="flex items-center gap-2">
-              <Input type="number" min={0} value={rules.employee_min ?? 0} onChange={e => setRules(r => ({ ...r, employee_min: Number(e.target.value) || 0 }))} placeholder="min" />
-              <span className="text-muted-foreground">–</span>
-              <Input type="number" min={0} value={rules.employee_max ?? 5000} onChange={e => setRules(r => ({ ...r, employee_max: Number(e.target.value) || 0 }))} placeholder="max" />
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 pt-2">
-          <Button onClick={save} disabled={saving} className="gap-2">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-            Save ICP rules
-          </Button>
-          <Button variant="outline" onClick={load} disabled={saving} size="sm">Revert</Button>
-        </div>
-      </div>
-    </div>
-  )
-}
