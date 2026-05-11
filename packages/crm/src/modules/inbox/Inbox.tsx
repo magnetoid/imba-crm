@@ -79,7 +79,32 @@ interface MessageRow {
 
 interface TemplateRow { id: string; name: string; subject: string | null; content: string }
 
-interface LeadRow { id: string; name: string; email: string | null; company: string | null }
+interface LeadRow {
+  id: string
+  name: string
+  email: string | null
+  company: string | null
+  stage: string | null
+  fit_score: number | null
+  intent_score: number | null
+  engagement_score: number | null
+  deal_value: number | null
+  next_follow_up: string | null
+  last_contacted_at: string | null
+  tags: string[] | null
+  ai_score: number | null
+  deal_health: string | null
+  notes: string | null
+}
+
+interface SignalRow {
+  id: string
+  kind: string
+  headline: string | null
+  source: string | null
+  captured_at: string
+  url: string | null
+}
 
 type Tab = 'all' | 'needs_reply' | 'fyi' | 'sent' | 'snoozed' | 'drafts'
 
@@ -172,6 +197,7 @@ export default function AIInbox() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [messages, setMessages] = useState<MessageRow[]>([])
   const [lead, setLead] = useState<LeadRow | null>(null)
+  const [leadSignals, setLeadSignals] = useState<SignalRow[]>([])
   const [loadingThread, setLoadingThread] = useState(false)
   const [draft, setDraft] = useState('')
   const [draftCc,  setDraftCc]  = useState('')
@@ -348,8 +374,16 @@ export default function AIInbox() {
   }
 
   async function loadLead(id: string) {
-    const { data } = await supabase.from('crm_leads').select('id, name, email, company').eq('id', id).maybeSingle()
-    setLead(data as LeadRow | null)
+    const [{ data: leadRow }, { data: sigRows }] = await Promise.all([
+      supabase.from('crm_leads')
+        .select('id, name, email, company, stage, fit_score, intent_score, engagement_score, deal_value, next_follow_up, last_contacted_at, tags, ai_score, deal_health, notes')
+        .eq('id', id).maybeSingle(),
+      supabase.from('crm_signals')
+        .select('id, kind, headline, source, captured_at, url')
+        .eq('lead_id', id).order('captured_at', { ascending: false }).limit(5),
+    ])
+    setLead(leadRow as LeadRow | null)
+    setLeadSignals((sigRows as SignalRow[] | null) ?? [])
   }
 
   // ── Filtered + searched view ───────────────────────────────────────
@@ -1185,6 +1219,15 @@ export default function AIInbox() {
           </>
         )}
       </main>
+
+      {/* RIGHT: lead context panel — only when a thread is selected
+          and we have a linked lead. Static width so the messages pane
+          doesn't reflow on open/close. */}
+      {selectedKey && lead && !composeNewOpen && (
+        <aside className="hidden lg:flex w-72 border-l border-border bg-card flex-col flex-shrink-0 overflow-y-auto">
+          <LeadContextPanel lead={lead} signals={leadSignals} />
+        </aside>
+      )}
     </div>
   )
 }
@@ -1193,6 +1236,146 @@ export default function AIInbox() {
 // here so we render every body — legacy HTML rows included — as
 // non-executing text. Eliminates the XSS surface that
 // dangerouslySetInnerHTML previously exposed.
+// Lead context panel — right-rail summary of the lead linked to the
+// open thread. Shows stage, scores, deal value, recent signals + quick
+// links to the LeadDetail page and Nomo. Read-only: edits happen in
+// LeadDetail (one click via the "Open lead" button).
+function LeadContextPanel({ lead, signals }: { lead: LeadRow; signals: SignalRow[] }) {
+  const scoreColor = (s: number | null): string => {
+    if (s == null) return 'text-muted-foreground'
+    if (s >= 70) return 'text-emerald-700'
+    if (s >= 40) return 'text-amber-700'
+    return 'text-red-700'
+  }
+  const stageBadge: Record<string, string> = {
+    new:        'bg-slate-100 text-slate-700',
+    qualified:  'bg-blue-100 text-blue-700',
+    proposal:   'bg-violet-100 text-violet-700',
+    negotiation:'bg-amber-100 text-amber-700',
+    won:        'bg-emerald-100 text-emerald-700',
+    lost:       'bg-red-100 text-red-700',
+  }
+  const stageClass = stageBadge[lead.stage ?? ''] ?? 'bg-muted text-muted-foreground'
+  const healthColor: Record<string, string> = {
+    green:  'bg-emerald-500',
+    yellow: 'bg-amber-500',
+    red:    'bg-red-500',
+  }
+
+  return (
+    <div className="p-4 space-y-4">
+      {/* Identity */}
+      <div>
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold truncate">{lead.name}</h3>
+          {lead.deal_health && (
+            <span className={`inline-block w-2 h-2 rounded-full ${healthColor[lead.deal_health] ?? 'bg-muted'}`} title={`Deal health: ${lead.deal_health}`} />
+          )}
+        </div>
+        {lead.company && <p className="text-xs text-muted-foreground truncate mt-0.5">{lead.company}</p>}
+        {lead.stage && (
+          <span className={`inline-block mt-1.5 px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider ${stageClass}`}>
+            {lead.stage}
+          </span>
+        )}
+      </div>
+
+      {/* Scores */}
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div>
+          <p className="text-[10px] uppercase text-muted-foreground tracking-wider">Fit</p>
+          <p className={`text-base font-mono font-semibold ${scoreColor(lead.fit_score)}`}>{lead.fit_score ?? '–'}</p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase text-muted-foreground tracking-wider">Intent</p>
+          <p className={`text-base font-mono font-semibold ${scoreColor(lead.intent_score)}`}>{lead.intent_score ?? '–'}</p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase text-muted-foreground tracking-wider">Eng.</p>
+          <p className={`text-base font-mono font-semibold ${scoreColor(lead.engagement_score)}`}>{lead.engagement_score ?? '–'}</p>
+        </div>
+      </div>
+
+      {/* Deal value + follow-up */}
+      <div className="space-y-2 text-xs">
+        {lead.deal_value != null && lead.deal_value > 0 && (
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">Deal value</span>
+            <span className="font-mono font-semibold">${Number(lead.deal_value).toLocaleString()}</span>
+          </div>
+        )}
+        {lead.next_follow_up && (
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">Next follow-up</span>
+            <span className="font-mono">{new Date(lead.next_follow_up).toLocaleDateString()}</span>
+          </div>
+        )}
+        {lead.last_contacted_at && (
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">Last contact</span>
+            <span className="font-mono">{new Date(lead.last_contacted_at).toLocaleDateString()}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Tags */}
+      {lead.tags && lead.tags.length > 0 && (
+        <div>
+          <p className="text-[10px] uppercase text-muted-foreground tracking-wider mb-1">Tags</p>
+          <div className="flex flex-wrap gap-1">
+            {lead.tags.map(t => (
+              <span key={t} className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded">#{t}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recent signals */}
+      {signals.length > 0 && (
+        <div>
+          <p className="text-[10px] uppercase text-muted-foreground tracking-wider mb-1.5">Recent signals</p>
+          <div className="space-y-1.5">
+            {signals.map(s => (
+              <div key={s.id} className="text-[11px]">
+                <p className="font-medium truncate">{s.headline || s.kind}</p>
+                <p className="text-[10px] text-muted-foreground/70">
+                  {s.kind} · {new Date(s.captured_at).toLocaleDateString()}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Quick actions */}
+      <div className="space-y-1.5 pt-2 border-t border-border">
+        <a
+          href={`/admin/crm/${lead.id}`}
+          className="block w-full text-center text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+        >
+          Open lead →
+        </a>
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent('nomo:open', {
+            detail: { lead_id: lead.id, lead_label: `${lead.name}${lead.company ? ' (' + lead.company + ')' : ''}` },
+          }))}
+          className="block w-full text-center text-xs px-3 py-1.5 rounded border border-border hover:bg-muted/60 transition-colors"
+        >
+          Discuss with Nomo
+        </button>
+      </div>
+
+      {/* Operator notes (read-only — edit on LeadDetail) */}
+      {lead.notes && (
+        <div className="pt-2 border-t border-border">
+          <p className="text-[10px] uppercase text-muted-foreground tracking-wider mb-1">Notes</p>
+          <p className="text-[11px] leading-relaxed text-muted-foreground whitespace-pre-wrap line-clamp-6">{lead.notes}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // Snooze dropdown — preset options + a custom date+time input. Closes
 // on click outside or after a pick. Returns the chosen moment to the
 // parent via onPick.
