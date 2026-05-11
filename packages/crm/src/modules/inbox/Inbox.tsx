@@ -207,6 +207,7 @@ export default function AIInbox() {
   const [draftSubject, setDraftSubject] = useState('')
   const [draftTo,  setDraftTo]  = useState('')
   const [composeNewOpen, setComposeNewOpen] = useState(false)
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
   const [sending, setSending] = useState(false)
   const [scheduleForOpen, setScheduleForOpen] = useState(false)
   const [scheduleDate, setScheduleDate] = useState('')
@@ -802,6 +803,55 @@ export default function AIInbox() {
     setMessages([])
   }
 
+  // Bulk operations — apply across all selected thread_keys at once.
+  function toggleSelected(key: string, e?: React.MouseEvent) {
+    // Shift-click to extend range, Cmd/Ctrl-click to toggle single.
+    setSelectedKeys(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+    e?.stopPropagation()
+  }
+  function clearSelection() { setSelectedKeys(new Set()) }
+  async function bulkArchive() {
+    if (selectedKeys.size === 0) return
+    const keys = Array.from(selectedKeys)
+    const { data: ids } = await supabase
+      .from('crm_inbox_messages').select('id').in('thread_key', keys)
+    const idList = (ids as Array<{ id: string }> | null)?.map(r => r.id) ?? []
+    if (idList.length === 0) return
+    await supabase.from('crm_inbox_messages').update({ status: 'archived' }).in('id', idList)
+    setThreads(prev => prev.filter(t => !selectedKeys.has(t.thread_key)))
+    setSelectedKeys(new Set())
+    toast.success(`Archived ${keys.length} thread${keys.length === 1 ? '' : 's'}`)
+  }
+  async function bulkSnooze(when: Date) {
+    if (selectedKeys.size === 0) return
+    const keys = Array.from(selectedKeys)
+    const { data: ids } = await supabase
+      .from('crm_inbox_messages').select('id').in('thread_key', keys)
+    const idList = (ids as Array<{ id: string }> | null)?.map(r => r.id) ?? []
+    if (idList.length === 0) return
+    await supabase.from('crm_inbox_messages').update({ snoozed_until: when.toISOString() }).in('id', idList)
+    setThreads(prev => prev.filter(t => !selectedKeys.has(t.thread_key)))
+    setSelectedKeys(new Set())
+    toast.success(`Snoozed ${keys.length} thread${keys.length === 1 ? '' : 's'} until ${when.toLocaleString()}`)
+  }
+  async function bulkMarkRead() {
+    if (selectedKeys.size === 0) return
+    const keys = Array.from(selectedKeys)
+    const { data: ids } = await supabase
+      .from('crm_inbox_messages').select('id').in('thread_key', keys).eq('status', 'unread')
+    const idList = (ids as Array<{ id: string }> | null)?.map(r => r.id) ?? []
+    if (idList.length === 0) { toast('Already read', { icon: 'ℹ️' }); return }
+    await supabase.from('crm_inbox_messages').update({ status: 'read' }).in('id', idList)
+    setThreads(prev => prev.map(t => selectedKeys.has(t.thread_key) ? { ...t, unread_count: 0 } : t))
+    setSelectedKeys(new Set())
+    toast.success(`Marked ${idList.length} message${idList.length === 1 ? '' : 's'} as read`)
+  }
+
   // Snooze the thread until a chosen date+time. Sets snoozed_until on
   // every message in the thread so the crm_inbox_threads view's
   // is_snoozed roll-up picks it up. Thread disappears from "All" until
@@ -881,6 +931,18 @@ export default function AIInbox() {
           </div>
         </div>
 
+        {/* Bulk action bar — appears when any threads are selected. */}
+        {selectedKeys.size > 0 && (
+          <div className="px-3 py-2 border-b border-border bg-primary/10 flex items-center gap-2">
+            <span className="text-xs font-mono">{selectedKeys.size} selected</span>
+            <button onClick={clearSelection} className="text-[11px] text-muted-foreground hover:text-foreground">Clear</button>
+            <div className="flex-1" />
+            <button onClick={bulkMarkRead} className="text-xs px-2 py-1 rounded bg-card hover:bg-muted">Mark read</button>
+            <SnoozeMenu onPick={bulkSnooze} />
+            <button onClick={bulkArchive} className="text-xs px-2 py-1 rounded bg-card hover:bg-muted text-amber-700">Archive</button>
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto">
           {tab === 'drafts' ? (
             // Drafts list — auto-saved local drafts keyed by thread_key
@@ -927,11 +989,22 @@ export default function AIInbox() {
             </div>
           ) : (
             filteredThreads.map(t => (
-              <button key={t.thread_key} onClick={() => void openThread(t.thread_key)}
-                className={`w-full text-left p-3 border-b border-border transition-colors ${
-                  selectedKey === t.thread_key ? 'bg-primary/10' : t.unread_count > 0 ? 'bg-muted/40 hover:bg-muted/60' : 'hover:bg-muted/30'
+              <div key={t.thread_key}
+                onClick={() => void openThread(t.thread_key)}
+                className={`w-full text-left p-3 border-b border-border transition-colors cursor-pointer flex items-start gap-2 ${
+                  selectedKeys.has(t.thread_key) ? 'bg-primary/15' :
+                  selectedKey === t.thread_key ? 'bg-primary/10' :
+                  t.unread_count > 0 ? 'bg-muted/40 hover:bg-muted/60' : 'hover:bg-muted/30'
                 }`}
               >
+                <input
+                  type="checkbox"
+                  checked={selectedKeys.has(t.thread_key)}
+                  onChange={() => toggleSelected(t.thread_key)}
+                  onClick={e => e.stopPropagation()}
+                  className="mt-1 flex-shrink-0 accent-primary"
+                />
+                <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between gap-2 mb-1">
                   <p className={`text-xs truncate ${t.unread_count > 0 ? 'font-semibold text-foreground' : 'text-foreground'}`}>
                     {t.last_from_email ?? (t.has_inbound ? 'Unknown sender' : 'You')}
@@ -950,7 +1023,8 @@ export default function AIInbox() {
                   {t.latest_ai_sentiment === 'positive' && <span className="text-[10px] text-emerald-700">😊</span>}
                   {t.latest_ai_sentiment === 'negative' && <span className="text-[10px] text-red-700">😬</span>}
                 </div>
-              </button>
+                </div>
+              </div>
             ))
           )}
         </div>
