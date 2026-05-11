@@ -526,7 +526,21 @@ export default function AIInbox() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 space-y-3">
-              {messages.map(m => <MessageCard key={m.id} message={m} />)}
+              {messages.map((m, idx) => {
+                // The inbox-replier agent pre-computes ai_suggested_reply
+                // on the latest inbound. Surface it as a one-tap chip
+                // ONLY on that row — older suggestions are stale.
+                const isLatestInbound = m.direction === 'inbound'
+                  && messages.slice(idx + 1).every(later => later.direction !== 'inbound')
+                return (
+                  <MessageCard
+                    key={m.id}
+                    message={m}
+                    showSuggestion={isLatestInbound}
+                    onUseSuggestion={(text) => { setDraft(text); composerRef.current?.focus() }}
+                  />
+                )
+              })}
             </div>
 
             {/* COMPOSER + AI tools */}
@@ -659,10 +673,17 @@ function splitQuoted(body: string): { current: string; quoted: string | null } {
   return { current: current || body.trim(), quoted: quoted || null }
 }
 
-function MessageCard({ message }: { message: MessageRow }) {
+interface MessageCardProps {
+  message: MessageRow
+  showSuggestion?: boolean
+  onUseSuggestion?: (text: string) => void
+}
+
+function MessageCard({ message, showSuggestion = false, onUseSuggestion }: MessageCardProps) {
   const [expanded, setExpanded] = useState(true)
   const [showQuoted, setShowQuoted] = useState(false)
   const isInbound = message.direction === 'inbound'
+  const suggestion = message.ai_suggested_reply?.trim() ?? ''
 
   const safeBody = useMemo(() => {
     const raw = message.body ?? ''
@@ -705,6 +726,21 @@ function MessageCard({ message }: { message: MessageRow }) {
                 <pre className="mt-2 text-xs whitespace-pre-wrap font-sans text-muted-foreground border-l-2 border-muted pl-3">{quoted}</pre>
               )}
             </div>
+          )}
+          {showSuggestion && suggestion && onUseSuggestion && (
+            <button
+              type="button"
+              onClick={() => onUseSuggestion(suggestion)}
+              className="mt-3 w-full text-left bg-primary/5 hover:bg-primary/10 border border-primary/20 rounded-md px-3 py-2 transition-colors group"
+              title="Click to load this AI-drafted reply into the composer"
+            >
+              <p className="text-[10px] font-mono uppercase tracking-wider text-primary/70 mb-0.5 inline-flex items-center gap-1">
+                <Sparkles className="h-2.5 w-2.5" />
+                AI suggested reply
+                <span className="ml-auto text-primary/50 group-hover:text-primary text-[10px] normal-case tracking-normal">click to use →</span>
+              </p>
+              <p className="text-xs text-foreground/80 line-clamp-3 leading-relaxed">{suggestion}</p>
+            </button>
           )}
         </div>
       )}
