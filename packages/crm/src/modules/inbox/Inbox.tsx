@@ -709,6 +709,40 @@ export default function AIInbox() {
     setMessages([])
   }
 
+  // Snooze the thread until a chosen date+time. Sets snoozed_until on
+  // every message in the thread so the crm_inbox_threads view's
+  // is_snoozed roll-up picks it up. Thread disappears from "All" until
+  // the moment passes.
+  async function snoozeThread(when: Date) {
+    if (!selectedKey) return
+    const ids = messages.map(m => m.id)
+    if (ids.length === 0) return
+    const iso = when.toISOString()
+    const { error } = await supabase.from('crm_inbox_messages').update({ snoozed_until: iso }).in('id', ids)
+    if (error) { toast.error(error.message); return }
+    toast.success(`Snoozed until ${when.toLocaleString()}`)
+    setThreads(prev => prev.filter(t => t.thread_key !== selectedKey))
+    setSelectedKey(null)
+    setMessages([])
+  }
+
+  // Block sender — adds the latest inbound from_email's domain (or the
+  // exact address) to crm_inbox_skip_senders. Future mail from that
+  // pattern gets dropped on insert. Then archives the current thread.
+  async function blockSender() {
+    const lastInbound = [...messages].reverse().find(m => m.direction === 'inbound')
+    const from = lastInbound?.from_email
+    if (!from) { toast.error('No inbound sender to block'); return }
+    if (!confirm(`Block all future mail from "${from}"?\n\nAdds the address to your skip-senders list and archives this thread.`)) return
+    const { error } = await supabase.from('crm_inbox_skip_senders').insert({
+      pattern: from.toLowerCase(),
+      reason: 'Operator blocked from Inbox',
+    })
+    if (error && !error.message.includes('duplicate')) { toast.error(error.message); return }
+    await archiveThread()
+    toast.success(`Blocked ${from}`)
+  }
+
   // ── Render ─────────────────────────────────────────────────────────
   return (
     <div className="h-[calc(100vh-0px)] flex">
@@ -937,11 +971,15 @@ export default function AIInbox() {
                 <Button variant="ghost" size="sm" onClick={startReply} className="gap-1 h-8" title="Reply (r)">
                   <Reply className="h-3.5 w-3.5" /> Reply
                 </Button>
-                <Button variant="ghost" size="sm" onClick={startReplyAll} className="gap-1 h-8" title="Reply to all recipients">
+                <Button variant="ghost" size="sm" onClick={startReplyAll} className="gap-1 h-8" title="Reply to all recipients (Shift+R)">
                   <Reply className="h-3.5 w-3.5 scale-x-[-1]" /> Reply all
                 </Button>
-                <Button variant="ghost" size="sm" onClick={startForward} className="gap-1 h-8" title="Forward this thread">
+                <Button variant="ghost" size="sm" onClick={startForward} className="gap-1 h-8" title="Forward this thread (f)">
                   <Send className="h-3.5 w-3.5 rotate-45" /> Forward
+                </Button>
+                <SnoozeMenu onPick={snoozeThread} />
+                <Button variant="ghost" size="sm" onClick={blockSender} className="gap-1 h-8 text-red-600 hover:text-red-700" title="Block this sender + archive">
+                  <AlertCircle className="h-3.5 w-3.5" /> Block
                 </Button>
                 <Button variant="ghost" size="sm" onClick={archiveThread} className="gap-1 h-8" title="Archive (e)">
                   <Archive className="h-3.5 w-3.5" /> Archive
@@ -1155,6 +1193,74 @@ export default function AIInbox() {
 // here so we render every body — legacy HTML rows included — as
 // non-executing text. Eliminates the XSS surface that
 // dangerouslySetInnerHTML previously exposed.
+// Snooze dropdown — preset options + a custom date+time input. Closes
+// on click outside or after a pick. Returns the chosen moment to the
+// parent via onPick.
+function SnoozeMenu({ onPick }: { onPick: (when: Date) => void }) {
+  const [open, setOpen] = useState(false)
+  const [customDate, setCustomDate] = useState('')
+  const [customTime, setCustomTime] = useState('09:00')
+  const ref = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const presets: Array<{ label: string; when: () => Date }> = [
+    { label: 'Later today (4h)', when: () => new Date(Date.now() + 4 * 3600_000) },
+    { label: 'Tomorrow 9 am',    when: () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d } },
+    { label: 'This weekend',     when: () => { const d = new Date(); const days = (6 - d.getDay() + 7) % 7 || 6; d.setDate(d.getDate() + days); d.setHours(9, 0, 0, 0); return d } },
+    { label: 'Next Monday 9 am', when: () => { const d = new Date(); const days = (1 - d.getDay() + 7) % 7 || 7; d.setDate(d.getDate() + days); d.setHours(9, 0, 0, 0); return d } },
+    { label: 'Next week (7d)',   when: () => new Date(Date.now() + 7 * 24 * 3600_000) },
+  ]
+
+  function pickCustom() {
+    if (!customDate) return
+    const dt = new Date(`${customDate}T${customTime}:00`)
+    if (isNaN(dt.getTime()) || dt.getTime() < Date.now()) return
+    onPick(dt)
+    setOpen(false)
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <Button variant="ghost" size="sm" onClick={() => setOpen(o => !o)} className="gap-1 h-8" title="Snooze">
+        <Clock className="h-3.5 w-3.5" /> Snooze
+      </Button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 w-64 bg-card border border-border rounded-md shadow-lg z-30 p-1">
+          {presets.map(p => (
+            <button
+              key={p.label}
+              onClick={() => { onPick(p.when()); setOpen(false) }}
+              className="w-full text-left text-xs px-3 py-1.5 rounded hover:bg-muted/60"
+            >
+              <span className="text-muted-foreground">{p.label}</span>
+              <span className="ml-2 text-[10px] font-mono text-muted-foreground/60">
+                {p.when().toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+              </span>
+            </button>
+          ))}
+          <div className="border-t border-border my-1" />
+          <div className="px-2 py-1.5">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1">Custom</p>
+            <div className="flex gap-1">
+              <Input type="date" value={customDate} onChange={e => setCustomDate(e.target.value)} className="h-7 text-xs flex-1" />
+              <Input type="time" value={customTime} onChange={e => setCustomTime(e.target.value)} className="h-7 text-xs w-20" />
+            </div>
+            <Button size="sm" onClick={pickCustom} disabled={!customDate} className="h-7 text-xs w-full mt-1">Snooze until</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function htmlToText(html: string): string {
   return html
     .replace(/<style[\s\S]*?<\/style>/gi, '')
