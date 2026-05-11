@@ -80,7 +80,24 @@ interface LeadRow { id: string; name: string; email: string | null; company: str
 type Tab = 'all' | 'needs_reply' | 'fyi' | 'sent' | 'snoozed'
 
 const CACHE_KEY = 'inbox_threads_cache_v2'
+const MESSAGE_CACHE_MAX = 50           // LRU size cap (~50 threads × ~50 msgs)
 const MESSAGE_CACHE = new Map<string, MessageRow[]>()  // in-memory, by thread_key
+// JS Maps preserve insertion order — re-set on access to move to "newest",
+// and we evict the oldest (first) entry when the size cap is hit.
+function lruGet(key: string): MessageRow[] | undefined {
+  const v = MESSAGE_CACHE.get(key)
+  if (!v) return undefined
+  MESSAGE_CACHE.delete(key); MESSAGE_CACHE.set(key, v)
+  return v
+}
+function lruSet(key: string, v: MessageRow[]) {
+  if (MESSAGE_CACHE.has(key)) MESSAGE_CACHE.delete(key)
+  MESSAGE_CACHE.set(key, v)
+  if (MESSAGE_CACHE.size > MESSAGE_CACHE_MAX) {
+    const oldest = MESSAGE_CACHE.keys().next().value
+    if (oldest) MESSAGE_CACHE.delete(oldest)
+  }
+}
 
 interface Cache { threads: ThreadRow[]; fetched_at: string }
 function readCache(): Cache | null {
@@ -118,6 +135,10 @@ export default function AIInbox() {
   const composerRef = useRef<HTMLTextAreaElement | null>(null)
 
   // ── Initial load + delta fetch ──────────────────────────────────────
+  // Cursor = max(last_message_at) of all merged threads, NOT wall-clock.
+  // Wall-clock would silently drop late-arriving messages whose
+  // received_at is older than the previous fetch's timestamp (clock skew,
+  // delayed IMAP backfill, slow DB inserts).
   const fetchThreads = useCallback(async (mode: 'delta' | 'full' = 'delta') => {
     setRefreshing(true)
     const cache = readCache()
@@ -132,7 +153,16 @@ export default function AIInbox() {
     const fresh = (data as ThreadRow[] | null) ?? []
     setThreads(prev => {
       const merged = mergeThreads(mode === 'full' ? [] : prev, fresh)
-      writeCache({ threads: merged, fetched_at: new Date().toISOString() })
+      // Cursor = newest message timestamp from the merged set. Falls back
+      // to the previous cursor if we have no threads at all.
+      const newestTs = merged.reduce<string>((acc, t) => {
+        const ts = t.last_message_at
+        return !acc || ts > acc ? ts : acc
+      }, '')
+      writeCache({
+        threads: merged,
+        fetched_at: newestTs || cache?.fetched_at || new Date(0).toISOString(),
+      })
       return merged
     })
   }, [])
@@ -155,14 +185,20 @@ export default function AIInbox() {
     })()
   }, [])
 
+  // Track the most-recently-requested thread so an in-flight fetch can
+  // detect it has been superseded (user clicked thread B before A's
+  // fetch resolved → A's response must NOT overwrite B's messages).
+  const activeFetchRef = useRef<string | null>(null)
+
   // ── Open a thread ──────────────────────────────────────────────────
   const openThread = useCallback(async (key: string) => {
     setSelectedKey(key)
+    activeFetchRef.current = key
     setSuggestions(null)
     setDraft('')
     setComposePrompt('')
 
-    const cached = MESSAGE_CACHE.get(key)
+    const cached = lruGet(key)
     if (cached) {
       setMessages(cached)
       const leadId = cached.find(m => m.lead_id)?.lead_id ?? null
@@ -179,10 +215,13 @@ export default function AIInbox() {
       .select('id, thread_key, lead_id, direction, subject, body, from_email, to_email, status, ai_category, ai_sentiment, ai_suggested_reply, received_at, metadata')
       .eq('thread_key', key)
       .order('received_at', { ascending: true })
+    // Race-guard: if the user has clicked another thread while this one
+    // was loading, discard this response.
+    if (activeFetchRef.current !== key) return
     setLoadingThread(false)
     if (error) { toast.error(error.message); return }
     const msgs = (data as MessageRow[] | null) ?? []
-    MESSAGE_CACHE.set(key, msgs)
+    lruSet(key, msgs)
     setMessages(msgs)
     const leadId = msgs.find(m => m.lead_id)?.lead_id ?? null
     if (leadId) void loadLead(leadId)
