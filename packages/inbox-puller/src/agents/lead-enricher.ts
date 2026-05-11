@@ -97,11 +97,12 @@ export async function runLeadEnricher(ctx: AgentContext, job: JobRow): Promise<R
       domain: lead.domain,
       name: lead.name,
       chain: ['hunter', 'apollo'],
-    }, async () => {
+    }, async (s) => {
       const hunter = await tryHunter(lead)
-      if (hunter) return hunter
+      if (hunter) { s.summary(`Hunter returned ${hunter.email} (score ${hunter.score ?? '?'})`); return hunter }
       const apollo = await tryApolloEmail(lead)
-      if (apollo) return apollo
+      if (apollo) { s.summary(`Apollo returned ${apollo.email} (Hunter had no match)`); return apollo }
+      s.summary(`No provider returned an email for ${lead.domain ?? lead.name ?? 'this lead'}`)
       return null
     }) as EmailResolution | null
   }
@@ -153,13 +154,15 @@ export async function runLeadEnricher(ctx: AgentContext, job: JobRow): Promise<R
   await ctx.step('update-lead', {
     fields: Object.keys(update),
     provenance_changed: Object.keys(provenance).length !== Object.keys(lead.provenance ?? {}).length,
-  }, async () => {
-    if (Object.keys(update).length === 0) return { updated: false }
+  }, async (s) => {
+    if (Object.keys(update).length === 0) { s.summary('Nothing new to write — no fresh fields'); return { updated: false } }
     update.provenance = provenance
     update.updated_at = new Date().toISOString()
     const { error } = await supabase.from('crm_leads').update(update).eq('id', job.lead_id!)
     if (error) throw new Error(error.message)
-    return { updated: true, fields: Object.keys(update).filter(k => k !== 'provenance' && k !== 'updated_at') }
+    const fields = Object.keys(update).filter(k => k !== 'provenance' && k !== 'updated_at')
+    s.summary(`Wrote ${fields.length} field${fields.length === 1 ? '' : 's'}: ${fields.join(', ')}`)
+    return { updated: true, fields }
   })
 
   // ── Trigger scoring once the enrichment is in. The lead-scorer is in

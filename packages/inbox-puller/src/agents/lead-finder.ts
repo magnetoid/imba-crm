@@ -75,7 +75,7 @@ export async function runLeadFinder(ctx: AgentContext, job: JobRow): Promise<Rec
   const autoEnrich = (job.input.auto_enrich as boolean) ?? false
 
   // ── Step 1: run the Apify actor ─────────────────────────────────
-  const items = await ctx.step('run-actor', { actor_id: actorId }, async () => {
+  const items = await ctx.step('run-actor', { actor_id: actorId }, async (s) => {
     const cred = await loadProviderCredential('apify')
     if (!cred?.apiKey) throw new Error('apify provider credential not configured')
     const run = await runApifyActor<ScrapedRow>(cred, {
@@ -85,11 +85,12 @@ export async function runLeadFinder(ctx: AgentContext, job: JobRow): Promise<Rec
       maxItems: maxSave * 2,
     })
     if (run.status !== 'SUCCEEDED') throw new Error(`apify run ${run.status}`)
+    s.summary(`Ran ${actorId} → ${run.items.length} raw items`)
     return run.items
   })
 
   // ── Step 2: dedupe by domain ────────────────────────────────────
-  const fresh = await ctx.step('dedupe', { count_in: items.length }, async () => {
+  const fresh = await ctx.step('dedupe', { count_in: items.length }, async (s) => {
     const seen = new Set<string>()
     const out: ScrapedRow[] = []
     for (const row of items) {
@@ -109,14 +110,16 @@ export async function runLeadFinder(ctx: AgentContext, job: JobRow): Promise<Rec
       .select('domain')
       .in('domain', domains)
     const knownDomains = new Set(((existing as Array<{ domain: string }> | null) ?? []).map(r => r.domain.toLowerCase()))
-    return out.filter(r => {
+    const result = out.filter(r => {
       const d = pickDomain(r)
       return !d || !knownDomains.has(d.toLowerCase())
     })
+    s.summary(`${items.length} raw → ${out.length} unique → ${result.length} new (after ${knownDomains.size} known-domain skips)`)
+    return result
   })
 
   // ── Step 3: save to crm_companies + crm_leads ───────────────────
-  const saved = await ctx.step('save-leads', { count_to_save: (fresh as ScrapedRow[]).length }, async () => {
+  const saved = await ctx.step('save-leads', { count_to_save: (fresh as ScrapedRow[]).length }, async (s) => {
     const created = { companies: 0, leads: 0, lead_ids: [] as string[] }
     for (const row of fresh as ScrapedRow[]) {
       const domain      = pickDomain(row)
@@ -167,6 +170,7 @@ export async function runLeadFinder(ctx: AgentContext, job: JobRow): Promise<Rec
         created.lead_ids.push((inserted as { id: string }).id)
       }
     }
+    s.summary(`Saved ${created.leads} new leads + ${created.companies} new companies`)
     return created
   })
 

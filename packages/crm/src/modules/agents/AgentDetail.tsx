@@ -35,6 +35,7 @@ interface AgentRun {
   tokens_in: number | null
   tokens_out: number | null
   model: string | null
+  decision_summary: string | null
 }
 
 export default function AgentDetail() {
@@ -166,6 +167,12 @@ function RunCard({
         )}
       </div>
 
+      {/* Plain-language summary — the new primary line. Falls back to
+          the raw payloads if no agent set one. */}
+      {run.decision_summary && (
+        <p className="text-sm mb-2 leading-snug">{run.decision_summary}</p>
+      )}
+
       {Object.keys(run.input ?? {}).length > 0 && (
         <details className="mb-2">
           <summary className="text-xs text-muted-foreground cursor-pointer">input</summary>
@@ -174,7 +181,16 @@ function RunCard({
       )}
 
       {run.output && Object.keys(run.output).length > 0 && !isEditing && (
-        <pre className="text-xs whitespace-pre-wrap break-words bg-muted/30 rounded p-2 mb-2">{prettyJSON(run.output)}</pre>
+        // When we have a summary, hide raw output under a toggle so the
+        // primary line carries the meaning. No summary → show as before.
+        run.decision_summary ? (
+          <details className="mb-2">
+            <summary className="text-xs text-muted-foreground cursor-pointer">view raw output</summary>
+            <pre className="text-xs whitespace-pre-wrap break-words bg-muted/30 rounded p-2 mt-1">{prettyJSON(run.output)}</pre>
+          </details>
+        ) : (
+          <pre className="text-xs whitespace-pre-wrap break-words bg-muted/30 rounded p-2 mb-2">{prettyJSON(run.output)}</pre>
+        )
       )}
 
       {isEditing && editingText !== null && (

@@ -66,6 +66,10 @@ export interface StepHelpers {
   /** Update the step's input record with extra context (e.g. resolved
    *  lead-id from a free-text input). Visible in the Agents UI. */
   setInput(extra: Record<string, unknown>): void
+  /** One-sentence plain-language summary of what was decided / done in
+   *  this step. Surfaces in the Agents UI as the primary line above the
+   *  raw input/output JSON. Should be ≤120 chars. */
+  summary(text: string): void
 }
 
 export interface JobRow {
@@ -140,6 +144,7 @@ export function buildContext(job: JobRow): AgentContext {
       const stepIndex = stepNo
       let cost: RunCost = {}
       let extraInput: Record<string, unknown> = {}
+      let summary: string | null = null
 
       // Manual mode: don't run the step. The operator does the equivalent
       // action in the regular module UI; we record an explicit
@@ -180,6 +185,7 @@ export function buildContext(job: JobRow): AgentContext {
         output = await fn({
           cost(c: RunCost) { cost = { ...cost, ...c } },
           setInput(extra: Record<string, unknown>) { extraInput = { ...extraInput, ...extra } },
+          summary(text: string) { summary = text.slice(0, 240) },
         })
       } catch (err) {
         const message = (err as Error).message
@@ -199,6 +205,7 @@ export function buildContext(job: JobRow): AgentContext {
           output: serialise(output),
           finished_at: new Date().toISOString(),
           input: { ...input, ...extraInput },
+          decision_summary: summary,
           ...cost,
         }).eq('id', runId)
         return output
@@ -209,6 +216,7 @@ export function buildContext(job: JobRow): AgentContext {
         status: 'awaiting_approval',
         output: serialise(output),
         input: { ...input, ...extraInput },
+        decision_summary: summary,
         ...cost,
       }).eq('id', runId)
       await supabase.from('crm_agent_jobs')

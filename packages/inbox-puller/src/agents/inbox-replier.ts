@@ -40,6 +40,8 @@ export async function runInboxReplier(ctx: AgentContext, job: JobRow): Promise<R
     })
     if (!out) throw new Error('AI categorize returned nothing')
     s.cost({ cost_cents: 0 })
+    const replyLen = (out as { suggested_reply?: string }).suggested_reply?.length ?? 0
+    s.summary(`Categorised as ${(out as { category: string }).category} (${(out as { sentiment: string }).sentiment}); drafted ${replyLen}-char reply`)
     return out
   })
 
