@@ -134,6 +134,7 @@ export default function AIInbox() {
   const [showBcc,  setShowBcc]  = useState(false)
   const [draftSubject, setDraftSubject] = useState('')
   const [draftTo,  setDraftTo]  = useState('')
+  const [composeNewOpen, setComposeNewOpen] = useState(false)
   const [sending, setSending] = useState(false)
   const [suggestions, setSuggestions] = useState<Array<{ label: string; text: string }> | null>(null)
   const [suggestBusy, setSuggestBusy] = useState(false)
@@ -329,6 +330,10 @@ export default function AIInbox() {
         e.preventDefault(); startForward()
       } else if (e.key === 'e' && selectedKey) {
         e.preventDefault(); void archiveThread()
+      } else if (e.key === 'c' && !composeNewOpen) {
+        e.preventDefault(); openComposeNew()
+      } else if (e.key === 'Escape' && composeNewOpen) {
+        e.preventDefault(); closeComposeNew()
       }
     }
     document.addEventListener('keydown', onKey)
@@ -394,6 +399,84 @@ export default function AIInbox() {
       if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) seen.add(addr)
     }
     return Array.from(seen)
+  }
+
+  // ── Compose new message (fresh thread) ─────────────────────────────
+  function openComposeNew() {
+    setSelectedKey(null)
+    setMessages([])
+    setLead(null)
+    setComposeNewOpen(true)
+    setDraft('')
+    setDraftTo('')
+    setDraftCc('')
+    setDraftBcc('')
+    setShowCc(false)
+    setShowBcc(false)
+    setDraftSubject('')
+    setPendingAttachments([])
+    // Defer focus until the input mounts.
+    setTimeout(() => { (document.querySelector('input[data-compose-to]') as HTMLInputElement | null)?.focus() }, 50)
+  }
+  function closeComposeNew() {
+    setComposeNewOpen(false)
+    setDraft('')
+    setDraftTo(''); setDraftCc(''); setDraftBcc('')
+    setShowCc(false); setShowBcc(false)
+    setDraftSubject('')
+    setPendingAttachments([])
+  }
+  async function sendNew() {
+    const to = draftTo.trim().toLowerCase()
+    if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { toast.error('Enter a valid recipient'); return }
+    if (!draft.trim()) { toast.error('Body is empty'); return }
+    setSending(true)
+    // Look up an existing lead by email so the outbound message attaches
+    // to their conversation history. If no lead exists, the outreach
+    // row stays unlinked (operator can manually link later).
+    const { data: existingLead } = await supabase
+      .from('crm_leads').select('id').eq('email', to).maybeSingle()
+    const leadId = (existingLead as { id: string } | null)?.id ?? null
+    const ccList  = parseAddressList(draftCc)
+    const bccList = parseAddressList(draftBcc)
+    const trackingId = `imba-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const finalSubject = draftSubject.trim() || '(no subject)'
+    await supabase.from('crm_outreach_emails').insert({
+      lead_id: leadId,
+      subject: finalSubject,
+      body: draft,
+      to_email: to,
+      cc:  ccList.length  > 0 ? ccList  : null,
+      bcc: bccList.length > 0 ? bccList : null,
+      status: 'approved',
+      ai_generated: false,
+      tracking_id: trackingId,
+      attachment_storage_paths: pendingAttachments.length > 0 ? pendingAttachments.map(a => a.path) : null,
+    })
+    await supabase.from('crm_inbox_messages').insert({
+      lead_id: leadId,
+      direction: 'outbound',
+      subject: finalSubject,
+      body: draft,
+      from_email: smtpFromEmail,
+      to_email: to,
+      cc:  ccList.length  > 0 ? ccList  : null,
+      bcc: bccList.length > 0 ? bccList : null,
+      status: 'sent',
+      received_at: new Date().toISOString(),
+      type: 'general',
+      priority: 'normal',
+      metadata: {
+        attachments: pendingAttachments.map(a => ({
+          filename: a.filename, size_bytes: a.size_bytes,
+          mime: 'application/octet-stream', storage_path: a.path,
+        })),
+      },
+    })
+    setSending(false)
+    toast.success('New message queued')
+    closeComposeNew()
+    void fetchThreads('delta')
   }
 
   // ── Reply / Reply-All / Forward pre-fill ───────────────────────────
@@ -554,7 +637,15 @@ export default function AIInbox() {
           <div className="flex items-center gap-2">
             <InboxIcon className="h-4 w-4 text-primary" />
             <h2 className="text-sm font-semibold">Inbox</h2>
-            <Button variant="ghost" size="sm" className="ml-auto h-7 px-2"
+            <Button
+              variant="default" size="sm"
+              className="ml-auto h-7 px-2 gap-1"
+              onClick={openComposeNew}
+              title="Compose new message (c)"
+            >
+              <Send className="h-3.5 w-3.5" /> Compose
+            </Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2"
               onClick={() => void fetchThreads('full')}
               title="Full refresh (delta auto-loads on open)"
               disabled={refreshing}>
@@ -616,13 +707,93 @@ export default function AIInbox() {
         </div>
       </aside>
 
-      {/* MIDDLE: thread messages */}
+      {/* MIDDLE: thread messages OR new-compose pane */}
       <main className="flex-1 min-w-0 flex flex-col bg-background">
-        {!selectedKey ? (
+        {composeNewOpen ? (
+          <>
+            <div className="border-b border-border px-5 py-3 flex items-center gap-3">
+              <h1 className="text-base font-semibold">New message</h1>
+              <Button variant="ghost" size="sm" onClick={closeComposeNew} className="ml-auto gap-1 h-8" title="Close (Esc)">
+                <X className="h-3.5 w-3.5" /> Close
+              </Button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              <div className="space-y-1.5 border border-border rounded-md p-2 bg-muted/20">
+                <div className="flex items-center gap-2">
+                  <Label className="text-[10px] font-mono uppercase text-muted-foreground w-8">To</Label>
+                  <Input
+                    data-compose-to
+                    value={draftTo}
+                    onChange={e => setDraftTo(e.target.value)}
+                    placeholder="someone@example.com"
+                    className="h-7 text-xs flex-1"
+                  />
+                  <div className="flex items-center gap-1 text-[10px]">
+                    {!showCc && <button type="button" onClick={() => setShowCc(true)} className="text-muted-foreground hover:text-foreground underline">Cc</button>}
+                    {!showBcc && <button type="button" onClick={() => setShowBcc(true)} className="text-muted-foreground hover:text-foreground underline">Bcc</button>}
+                  </div>
+                </div>
+                {showCc && (
+                  <div className="flex items-center gap-2">
+                    <Label className="text-[10px] font-mono uppercase text-muted-foreground w-8">Cc</Label>
+                    <Input value={draftCc} onChange={e => setDraftCc(e.target.value)} placeholder="comma-separated" className="h-7 text-xs flex-1" />
+                    <button type="button" onClick={() => { setShowCc(false); setDraftCc('') }} className="text-muted-foreground hover:text-red-600"><X className="h-3 w-3" /></button>
+                  </div>
+                )}
+                {showBcc && (
+                  <div className="flex items-center gap-2">
+                    <Label className="text-[10px] font-mono uppercase text-muted-foreground w-8">Bcc</Label>
+                    <Input value={draftBcc} onChange={e => setDraftBcc(e.target.value)} placeholder="hidden recipients" className="h-7 text-xs flex-1" />
+                    <button type="button" onClick={() => { setShowBcc(false); setDraftBcc('') }} className="text-muted-foreground hover:text-red-600"><X className="h-3 w-3" /></button>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <Label className="text-[10px] font-mono uppercase text-muted-foreground w-8">Subj</Label>
+                  <Input value={draftSubject} onChange={e => setDraftSubject(e.target.value)} placeholder="(subject)" className="h-7 text-xs flex-1" />
+                </div>
+              </div>
+              <Textarea
+                value={draft}
+                onChange={e => setDraft(e.target.value)}
+                placeholder="Type the message. ⌘⏎ to send · Esc to close."
+                onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); void sendNew() } }}
+                rows={14}
+                className="font-mono text-sm"
+              />
+              {pendingAttachments.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {pendingAttachments.map(a => (
+                    <span key={a.path} className="inline-flex items-center gap-1.5 px-2 py-1 border border-border rounded-md bg-muted/40 text-xs">
+                      <Paperclip className="h-3 w-3 text-muted-foreground" />
+                      <span className="font-mono truncate max-w-[200px]">{a.filename}</span>
+                      <span className="text-[10px] text-muted-foreground">{formatBytes(a.size_bytes)}</span>
+                      <button type="button" onClick={() => removeAttachment(a.path)} className="text-muted-foreground hover:text-red-600"><X className="h-3 w-3" /></button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <input
+                ref={attachFileRef}
+                type="file"
+                className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) void handleAttachFile(f); e.target.value = '' }}
+              />
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button onClick={() => attachFileRef.current?.click()} disabled={uploadingAttachment} size="sm" variant="outline" className="gap-1.5">
+                  {uploadingAttachment ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Paperclip className="h-3.5 w-3.5" />}
+                  Attach
+                </Button>
+                <Button onClick={() => void sendNew()} disabled={sending || !draftTo.trim() || !draft.trim()} className="ml-auto gap-1.5">
+                  {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Send
+                </Button>
+              </div>
+            </div>
+          </>
+        ) : !selectedKey ? (
           <div className="m-auto text-center text-muted-foreground p-8">
             <InboxIcon className="h-10 w-10 mx-auto opacity-30 mb-3" />
             <p className="text-sm">Select a thread to read.</p>
-            <p className="text-[11px] mt-2 opacity-70">⌘K search · j/k navigate · r reply · e archive</p>
+            <p className="text-[11px] mt-2 opacity-70">⌘K search · j/k navigate · c compose · r reply · Shift+R reply all · f forward · e archive</p>
           </div>
         ) : loadingThread ? (
           <div className="flex items-center justify-center h-full"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
