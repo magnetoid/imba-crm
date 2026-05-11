@@ -132,6 +132,7 @@ export default function AIInbox() {
   const [composePrompt, setComposePrompt] = useState('')
   const [composeBusy, setComposeBusy] = useState(false)
   const [templates, setTemplates] = useState<TemplateRow[]>([])
+  const [smtpFromEmail, setSmtpFromEmail] = useState<string | null>(null)
   const searchRef = useRef<HTMLInputElement | null>(null)
   const composerRef = useRef<HTMLTextAreaElement | null>(null)
 
@@ -178,11 +179,17 @@ export default function AIInbox() {
 
   useEffect(() => { void fetchThreads('delta') }, [fetchThreads])
 
-  // Load templates once.
+  // Load templates + outbound from-address once. smtp_from_email is what
+  // we stamp onto outbound mirror rows so the "from" attribution is
+  // accurate in the thread view.
   useEffect(() => {
     void (async () => {
-      const { data } = await supabase.from('crm_templates').select('id, name, subject, content').order('name')
-      setTemplates(((data as TemplateRow[] | null) ?? []))
+      const [{ data: tpl }, { data: rt }] = await Promise.all([
+        supabase.from('crm_templates').select('id, name, subject, content').order('name'),
+        supabase.from('crm_runtime_settings').select('smtp_from_email').eq('id', 1).maybeSingle(),
+      ])
+      setTemplates(((tpl as TemplateRow[] | null) ?? []))
+      setSmtpFromEmail(((rt as { smtp_from_email?: string | null } | null)?.smtp_from_email) ?? null)
     })()
   }, [])
 
@@ -383,7 +390,7 @@ export default function AIInbox() {
       direction: 'outbound',
       subject: `Re: ${replySubject}`,
       body: draft,
-      from_email: null,                       // populated post-send by send-email.ts
+      from_email: smtpFromEmail,              // best-effort; send-email.ts may refine
       to_email: recipientEmail,
       status: 'sent',
       received_at: new Date().toISOString(),
@@ -607,10 +614,67 @@ export default function AIInbox() {
   )
 }
 
+// HTML → plain text. Same shape as the worker-side htmlToText but lives
+// here so we render every body — legacy HTML rows included — as
+// non-executing text. Eliminates the XSS surface that
+// dangerouslySetInnerHTML previously exposed.
+function htmlToText(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<(br|p|div|li|tr|h[1-6])[^>]*>/gi, '\n')
+    .replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x?[0-9a-f]+;/gi, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+// Split a message body into (current, quoted). Quoted = the reply chain
+// already visible above in the thread — collapsed under a toggle so the
+// pane doesn't scroll forever in long conversations.
+function splitQuoted(body: string): { current: string; quoted: string | null } {
+  if (!body) return { current: '', quoted: null }
+  const lines = body.split(/\r?\n/)
+  // Look for the first "On <date>, <name> wrote:" trailer or first run
+  // of '>' lines. Everything after that is quoted.
+  let cutAt = -1
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i].trim()
+    if (/^on\s.+wrote:\s*$/i.test(l)) { cutAt = i; break }
+    if (/^-{2,}\s*original message\s*-{2,}$/i.test(l)) { cutAt = i; break }
+    if (/^from:\s.+\s<.+@.+>$/i.test(l) && i > 0) { cutAt = i; break }
+    if (l.startsWith('>')) { cutAt = i; break }
+  }
+  if (cutAt === -1) return { current: body.trim(), quoted: null }
+  const current = lines.slice(0, cutAt).join('\n').trimEnd()
+  const quoted  = lines.slice(cutAt).join('\n').trim()
+  return { current: current || body.trim(), quoted: quoted || null }
+}
+
 function MessageCard({ message }: { message: MessageRow }) {
   const [expanded, setExpanded] = useState(true)
+  const [showQuoted, setShowQuoted] = useState(false)
   const isInbound = message.direction === 'inbound'
-  const isHtml = /<[a-z][\s\S]*>/i.test(message.body ?? '')
+
+  const safeBody = useMemo(() => {
+    const raw = message.body ?? ''
+    const looksHtml = /<[a-z][\s\S]*>/i.test(raw)
+    return looksHtml ? htmlToText(raw) : raw
+  }, [message.body])
+  const { current, quoted } = useMemo(() => splitQuoted(safeBody), [safeBody])
+
+  const senderLabel = isInbound
+    ? (message.from_email ?? 'them')
+    : (message.from_email ?? 'you')
+
   return (
     <div className={`rounded-lg border ${isInbound ? 'border-border bg-card' : 'border-primary/20 bg-primary/5'} shadow-sm`}>
       <button onClick={() => setExpanded(o => !o)} className="w-full text-left p-3 flex items-center gap-2">
@@ -619,7 +683,7 @@ function MessageCard({ message }: { message: MessageRow }) {
         }`}>{isInbound ? <Reply className="h-3 w-3" /> : <Send className="h-3 w-3" />}</div>
         <div className="min-w-0 flex-1">
           <p className="text-xs font-medium truncate">
-            {isInbound ? (message.from_email ?? 'them') : 'You'}
+            {senderLabel}
             {message.ai_category && <span className="ml-2 text-[10px] text-muted-foreground font-mono">{message.ai_category}</span>}
           </p>
           <p className="text-[11px] text-muted-foreground">{new Date(message.received_at).toLocaleString()}</p>
@@ -628,9 +692,20 @@ function MessageCard({ message }: { message: MessageRow }) {
       </button>
       {expanded && (
         <div className="border-t border-border px-3 py-3">
-          {isHtml
-            ? <div className="text-sm prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: message.body }} />
-            : <pre className="text-sm whitespace-pre-wrap font-sans">{message.body}</pre>}
+          <pre className="text-sm whitespace-pre-wrap font-sans">{current}</pre>
+          {quoted && (
+            <div className="mt-2">
+              <button
+                onClick={() => setShowQuoted(s => !s)}
+                className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+              >
+                {showQuoted ? 'Hide quoted text' : 'Show quoted text'}
+              </button>
+              {showQuoted && (
+                <pre className="mt-2 text-xs whitespace-pre-wrap font-sans text-muted-foreground border-l-2 border-muted pl-3">{quoted}</pre>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
