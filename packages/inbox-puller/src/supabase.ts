@@ -161,6 +161,26 @@ async function loadSkipSenders(): Promise<string[]> {
   return patterns
 }
 
+// Cache our own outbound domain — used to detect self-replies (mail
+// that comes back to us from one of our own aliases / forwarders).
+let selfDomainCache: { domain: string | null; loadedAt: number } | null = null
+async function loadSelfDomain(): Promise<string | null> {
+  const now = Date.now()
+  if (selfDomainCache && now - selfDomainCache.loadedAt < SKIP_CACHE_MS) {
+    return selfDomainCache.domain
+  }
+  const { data } = await supabase
+    .from('crm_runtime_settings')
+    .select('smtp_from_email')
+    .eq('id', 1)
+    .maybeSingle()
+  const from = (data as { smtp_from_email: string | null } | null)?.smtp_from_email ?? null
+  const at = from?.lastIndexOf('@') ?? -1
+  const domain = at >= 0 && from ? from.slice(at + 1).toLowerCase() : null
+  selfDomainCache = { domain, loadedAt: now }
+  return domain
+}
+
 /** Inserts a new inbound row. Returns the row id so the caller can run
  *  AI categorization on it after the fact. */
 export async function insertInboxMessage(m: IncomingMessage): Promise<string | null> {
@@ -216,10 +236,23 @@ export async function insertInboxMessage(m: IncomingMessage): Promise<string | n
   // (this also fires the hot-lead-alert trigger), tick the legacy
   // crm_outreach_emails.replied_at, and cancel any queued/scheduled
   // future steps so the sequence pauses.
+  //
+  // Skip threading when:
+  //   1. The inbound is an auto-response (vacation responder, bounce,
+  //      "we received your message" boilerplate). A vacation reply does
+  //      not mean the prospect engaged.
+  //   2. The from_email is on our own domain (self-loop — forwards,
+  //      BCCs, mailbox aliases hitting our own inbox).
   if (leadId) {
-    void threadInboundReply(leadId, m.received_at).catch(err =>
-      console.error(JSON.stringify({ msg: 'reply threading failed', leadId, error: (err as Error).message })),
-    )
+    const isAuto = (m.metadata as { is_auto_reply?: boolean } | null | undefined)?.is_auto_reply === true
+    const selfDomain = await loadSelfDomain()
+    const fromDomain = m.from_email?.split('@')[1]?.toLowerCase()
+    const isSelf = !!selfDomain && !!fromDomain && fromDomain === selfDomain
+    if (!isAuto && !isSelf) {
+      void threadInboundReply(leadId, m.received_at).catch(err =>
+        console.error(JSON.stringify({ msg: 'reply threading failed', leadId, error: (err as Error).message })),
+      )
+    }
   }
 
   return (data as { id: string } | null)?.id ?? null

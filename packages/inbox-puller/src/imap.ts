@@ -75,6 +75,34 @@ export async function pollImap(settings: RuntimeSettings) {
             : parsed.to?.value?.[0]?.address ?? null
           const subject = parsed.subject ?? null
           const body = parsed.text ?? parsed.html?.toString() ?? ''
+
+          // ── Auto-response detection (RFC 3834 + de-facto standards).
+          // Headers we honor:
+          //   Auto-Submitted:           anything other than "no" means auto
+          //   Precedence:               "bulk" / "list" / "auto_reply"
+          //   X-Auto-Response-Suppress: presence → originator wants no reply
+          //   X-Autoreply / X-Autorespond / X-Autoresponder: any value → auto
+          // We don't drop the row (the operator may want to see the
+          // out-of-office message); we just tag it so threadInboundReply
+          // doesn't tick responded_at and the inbox-replier doesn't loop.
+          const headers = parsed.headers
+          const hdr = (k: string): string | null => {
+            const v = headers?.get(k)
+            if (!v) return null
+            if (typeof v === 'string') return v.toLowerCase()
+            // mailparser sometimes returns an object — coerce defensively.
+            try { return JSON.stringify(v).toLowerCase() } catch { return null }
+          }
+          const autoSubmitted = hdr('auto-submitted')
+          const precedence = hdr('precedence')
+          const isAutoReply =
+            (autoSubmitted && autoSubmitted !== 'no') ||
+            (precedence && /(bulk|list|auto_reply|junk)/.test(precedence)) ||
+            !!hdr('x-auto-response-suppress') ||
+            !!hdr('x-autoreply') ||
+            !!hdr('x-autorespond') ||
+            !!hdr('x-autoresponder')
+
           const insertedId = await insertInboxMessage({
             from_email: fromAddr,
             to_email: toFirst,
@@ -87,14 +115,18 @@ export async function pollImap(settings: RuntimeSettings) {
               has_attachments: (parsed.attachments?.length ?? 0) > 0,
               in_reply_to: parsed.inReplyTo,
               references: parsed.references,
+              is_auto_reply: !!isAutoReply,
+              auto_submitted: autoSubmitted ?? undefined,
+              precedence: precedence ?? undefined,
             },
           })
           fetched++
           if (item.uid > lastUid) lastUid = item.uid
 
           // Best-effort AI categorize: don't let a slow/failed AI call
-          // block the next message — fire-and-forget.
-          if (insertedId && wantsAI) {
+          // block the next message — fire-and-forget. Skip auto-replies
+          // (no value in AI-categorizing a vacation responder).
+          if (insertedId && wantsAI && !isAutoReply) {
             void categorizeInboundMessage({ from_email: fromAddr, subject, body }).then(ai => {
               if (ai && insertedId) {
                 void updateInboxAI(insertedId, {
