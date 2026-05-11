@@ -29,6 +29,26 @@ interface OutreachRow {
   subject: string
   body: string
   from_email: string | null
+  in_reply_to: string | null
+  email_references: string[] | null
+  sent_message_id: string | null
+}
+
+// Deterministic Message-ID we control end-to-end. nodemailer will set
+// this exact value into the SMTP envelope, so when the prospect replies,
+// their In-Reply-To points at a value we have stored on the outreach row.
+function buildMessageId(outreachId: string, domain: string): string {
+  return `<outreach.${outreachId}@${domain}>`
+}
+
+// Derive a plausible Message-ID domain from the SMTP from-address. Falls
+// back to imbaproduction.com if we can't extract it. Must NOT have angle
+// brackets.
+function extractDomain(emailAddr: string | null | undefined): string {
+  if (!emailAddr) return 'imbaproduction.com'
+  const at = emailAddr.lastIndexOf('@')
+  if (at === -1 || at === emailAddr.length - 1) return 'imbaproduction.com'
+  return emailAddr.slice(at + 1).trim().toLowerCase()
 }
 
 interface RuntimeMail {
@@ -113,7 +133,7 @@ export async function pollOutreach() {
   // Pull a small batch each tick so a backlog drains gradually.
   const { data: rows, error } = await supabase
     .from('crm_outreach_emails')
-    .select('id, tracking_id, lead_id, subject, body, from_email')
+    .select('id, tracking_id, lead_id, subject, body, from_email, in_reply_to, email_references, sent_message_id')
     .eq('status', 'approved')
     .order('created_at', { ascending: true })
     .limit(20)
@@ -155,6 +175,25 @@ export async function pollOutreach() {
       : fromAddr
     const { html, text } = renderBody(row.body, row.tracking_id)
 
+    // ── RFC 5322 threading headers ────────────────────────────────────
+    // - Message-ID: deterministic, lets us match the prospect's reply later.
+    // - In-Reply-To + References: chain the reply tree if this email is
+    //   itself a reply (the SPA composer or inbox-replier set these).
+    // - Auto-Submitted + X-Auto-Response-Suppress: tell other inboxes
+    //   "this is a system reply" so they don't loop their auto-responders
+    //   into us.
+    const msgIdDomain = extractDomain(fromAddr)
+    const messageId = buildMessageId(row.id, msgIdDomain)
+    const headers: Record<string, string> = {
+      'X-Imba-Tracking-Id': row.tracking_id,
+      'Auto-Submitted': 'auto-replied',
+      'X-Auto-Response-Suppress': 'All',
+    }
+    if (row.in_reply_to) headers['In-Reply-To'] = row.in_reply_to
+    if (row.email_references && row.email_references.length > 0) {
+      headers['References'] = row.email_references.join(' ')
+    }
+
     try {
       const info = await transport.sendMail({
         from: fromHeader,
@@ -162,19 +201,34 @@ export async function pollOutreach() {
         subject: row.subject,
         html,
         text,
-        headers: {
-          'X-Imba-Tracking-Id': row.tracking_id,
-        },
+        messageId,
+        headers,
       })
       await supabase.from('crm_outreach_emails')
-        .update({ status: 'sent', sent_at: new Date().toISOString() })
+        .update({
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+          sent_message_id: messageId,
+        })
         .eq('id', row.id)
+      // Mirror the Message-ID into the matching crm_inbox_messages outbound
+      // row (if the SPA created one) so the thread_key + reply matching
+      // can find it. We match on (lead_id, tracking_id) via metadata, but
+      // tracking_id isn't always on the inbox mirror — fall back to a
+      // recent outbound for this lead with a NULL message_id.
+      await supabase.from('crm_inbox_messages')
+        .update({ metadata: { message_id: messageId, in_reply_to: row.in_reply_to, references: row.email_references } })
+        .eq('lead_id', row.lead_id)
+        .eq('direction', 'outbound')
+        .is('metadata->>message_id', null)
+        .gte('received_at', new Date(Date.now() - 5 * 60_000).toISOString())
       await recordEvent(row.id, 'sent', {
-        message_id: info.messageId,
+        message_id: messageId,
+        smtp_message_id: info.messageId,
         accepted: info.accepted,
         rejected: info.rejected,
       })
-      log('info', 'email sent', { id: row.id, to: recipient, message_id: info.messageId })
+      log('info', 'email sent', { id: row.id, to: recipient, message_id: messageId })
     } catch (err) {
       const message = (err as Error).message
       const reason = classifyBounce(message)
