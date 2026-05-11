@@ -208,6 +208,9 @@ export default function AIInbox() {
   const [draftTo,  setDraftTo]  = useState('')
   const [composeNewOpen, setComposeNewOpen] = useState(false)
   const [sending, setSending] = useState(false)
+  const [scheduleForOpen, setScheduleForOpen] = useState(false)
+  const [scheduleDate, setScheduleDate] = useState('')
+  const [scheduleTime, setScheduleTime] = useState('09:00')
   const [draftsList, setDraftsList] = useState<Array<{ key: string; draft: PersistedDraft }>>(() => listDrafts())
   const [suggestions, setSuggestions] = useState<Array<{ label: string; text: string }> | null>(null)
   const [suggestBusy, setSuggestBusy] = useState(false)
@@ -537,14 +540,11 @@ export default function AIInbox() {
     setDraftSubject('')
     setPendingAttachments([])
   }
-  async function sendNew() {
+  async function sendNew(scheduledFor?: Date) {
     const to = draftTo.trim().toLowerCase()
     if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { toast.error('Enter a valid recipient'); return }
     if (!draft.trim()) { toast.error('Body is empty'); return }
     setSending(true)
-    // Look up an existing lead by email so the outbound message attaches
-    // to their conversation history. If no lead exists, the outreach
-    // row stays unlinked (operator can manually link later).
     const { data: existingLead } = await supabase
       .from('crm_leads').select('id').eq('email', to).maybeSingle()
     const leadId = (existingLead as { id: string } | null)?.id ?? null
@@ -552,7 +552,8 @@ export default function AIInbox() {
     const bccList = parseAddressList(draftBcc)
     const trackingId = `imba-${Date.now()}-${Math.random().toString(36).slice(2)}`
     const finalSubject = draftSubject.trim() || '(no subject)'
-    await supabase.from('crm_outreach_emails').insert({
+    const effectiveScheduledFor = scheduledFor ?? new Date(Date.now() + UNDO_BUFFER_MS)
+    const { data: outreachInserted } = await supabase.from('crm_outreach_emails').insert({
       lead_id: leadId,
       subject: finalSubject,
       body: draft,
@@ -563,8 +564,10 @@ export default function AIInbox() {
       ai_generated: false,
       tracking_id: trackingId,
       attachment_storage_paths: pendingAttachments.length > 0 ? pendingAttachments.map(a => a.path) : null,
-    })
-    await supabase.from('crm_inbox_messages').insert({
+      scheduled_for: effectiveScheduledFor.toISOString(),
+    }).select('id').maybeSingle()
+    const outreachId = (outreachInserted as { id: string } | null)?.id ?? null
+    const { data: mirrorInserted } = await supabase.from('crm_inbox_messages').insert({
       lead_id: leadId,
       direction: 'outbound',
       subject: finalSubject,
@@ -578,17 +581,33 @@ export default function AIInbox() {
       type: 'general',
       priority: 'normal',
       metadata: {
+        scheduled_for: effectiveScheduledFor.toISOString(),
         attachments: pendingAttachments.map(a => ({
           filename: a.filename, size_bytes: a.size_bytes,
           mime: 'application/octet-stream', storage_path: a.path,
         })),
       },
-    })
+    }).select('id').maybeSingle()
+    const mirrorId = (mirrorInserted as { id: string } | null)?.id ?? null
     setSending(false)
     deleteDraft('__new')
     setDraftsList(listDrafts())
-    toast.success('New message queued')
     closeComposeNew()
+    if (scheduledFor && (scheduledFor.getTime() - Date.now()) > UNDO_BUFFER_MS + 60_000) {
+      toast.success(`Scheduled for ${scheduledFor.toLocaleString()}`)
+    } else if (outreachId) {
+      toast((t) => (
+        <span className="flex items-center gap-3">
+          <span>Send in {Math.round(UNDO_BUFFER_MS / 1000)}s</span>
+          <button
+            onClick={() => { void undoSend(outreachId, mirrorId); toast.dismiss(t.id) }}
+            className="font-mono text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            UNDO
+          </button>
+        </span>
+      ), { duration: UNDO_BUFFER_MS })
+    }
     void fetchThreads('delta')
   }
 
@@ -639,8 +658,28 @@ export default function AIInbox() {
     toast('Enter the recipient in the To: field', { icon: '➡️' })
   }
 
+  // Undo-send buffer: every send schedules ~15s in the future. The Undo
+  // toast appears for that window; clicking it flips the row back to
+  // status='cancelled' so send-email.ts never picks it up. Mirrors the
+  // Gmail "Undo Send" UX.
+  const UNDO_BUFFER_MS = 15_000
+
+  async function undoSend(outreachId: string, mirrorMessageId: string | null) {
+    const { error } = await supabase
+      .from('crm_outreach_emails')
+      .update({ status: 'cancelled' })
+      .eq('id', outreachId)
+      .eq('status', 'approved')   // race-safe: only if still pending
+    if (error) { toast.error('Too late — already sent'); return }
+    if (mirrorMessageId) {
+      await supabase.from('crm_inbox_messages').delete().eq('id', mirrorMessageId)
+    }
+    toast.success('Send undone')
+    void fetchThreads('delta')
+  }
+
   // ── Send + archive ─────────────────────────────────────────────────
-  async function sendReply() {
+  async function sendReply(scheduledFor?: Date) {
     if (!selectedKey || !draft.trim()) return
     setSending(true)
     const lastInbound = [...messages].reverse().find(m => m.direction === 'inbound')
@@ -653,6 +692,8 @@ export default function AIInbox() {
     const finalSubject = draftSubject.trim() || inferredSubject
     const ccList  = parseAddressList(draftCc)
     const bccList = parseAddressList(draftBcc)
+    // If no explicit schedule, apply the 15s undo buffer.
+    const effectiveScheduledFor = scheduledFor ?? new Date(Date.now() + UNDO_BUFFER_MS)
 
     // Insert into crm_outreach_emails as 'approved' so the outbound
     // mailer picks it up. Also mirror as a crm_inbox_messages outbound
@@ -672,7 +713,7 @@ export default function AIInbox() {
     }
     const references = Array.from(referencesSet)
 
-    await supabase.from('crm_outreach_emails').insert({
+    const { data: outreachInserted } = await supabase.from('crm_outreach_emails').insert({
       lead_id: lead?.id ?? null,
       subject: finalSubject,
       body: draft,
@@ -685,8 +726,10 @@ export default function AIInbox() {
       in_reply_to: lastInboundMessageId,
       email_references: references,
       attachment_storage_paths: pendingAttachments.length > 0 ? pendingAttachments.map(a => a.path) : null,
-    })
-    await supabase.from('crm_inbox_messages').insert({
+      scheduled_for: effectiveScheduledFor.toISOString(),
+    }).select('id').maybeSingle()
+    const outreachId = (outreachInserted as { id: string } | null)?.id ?? null
+    const { data: mirrorInserted } = await supabase.from('crm_inbox_messages').insert({
       lead_id: lead?.id ?? null,
       direction: 'outbound',
       subject: finalSubject,
@@ -700,11 +743,9 @@ export default function AIInbox() {
       type: 'general',
       priority: 'normal',
       metadata: {
-        // message_id is intentionally null here; send-email.ts stamps it
-        // once the SMTP send succeeds. Until then, the thread_key trigger
-        // uses the in_reply_to to attach to the parent's thread.
         in_reply_to: lastInboundMessageId,
         references,
+        scheduled_for: effectiveScheduledFor.toISOString(),
         attachments: pendingAttachments.map(a => ({
           filename: a.filename,
           size_bytes: a.size_bytes,
@@ -712,7 +753,8 @@ export default function AIInbox() {
           storage_path: a.path,
         })),
       },
-    })
+    }).select('id').maybeSingle()
+    const mirrorId = (mirrorInserted as { id: string } | null)?.id ?? null
     setSending(false)
     setDraft('')
     setDraftSubject('')
@@ -725,7 +767,24 @@ export default function AIInbox() {
     setPendingAttachments([])
     if (selectedKey) deleteDraft(selectedKey)
     setDraftsList(listDrafts())
-    toast.success('Reply queued — outbound worker will send within a minute')
+
+    // Show appropriate toast — long-schedule vs undo-buffer.
+    if (scheduledFor && (scheduledFor.getTime() - Date.now()) > UNDO_BUFFER_MS + 60_000) {
+      toast.success(`Scheduled for ${scheduledFor.toLocaleString()}`)
+    } else if (outreachId) {
+      // Undo-able send — toast for the buffer duration.
+      toast((t) => (
+        <span className="flex items-center gap-3">
+          <span>Send in {Math.round(UNDO_BUFFER_MS / 1000)}s</span>
+          <button
+            onClick={() => { void undoSend(outreachId, mirrorId); toast.dismiss(t.id) }}
+            className="font-mono text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            UNDO
+          </button>
+        </span>
+      ), { duration: UNDO_BUFFER_MS })
+    }
     // Refresh this thread (clears in-memory cache so latest outbound shows).
     MESSAGE_CACHE.delete(selectedKey)
     void openThread(selectedKey)
@@ -1210,6 +1269,32 @@ export default function AIInbox() {
                 )}
                 <div className="flex-1" />
                 <span className="text-[10px] text-muted-foreground font-mono">⌘⏎</span>
+                {/* Schedule send popover */}
+                {scheduleForOpen ? (
+                  <div className="flex items-center gap-1 bg-card border border-border rounded-md p-1">
+                    <Input type="date" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} className="h-7 text-xs w-32" />
+                    <Input type="time" value={scheduleTime} onChange={e => setScheduleTime(e.target.value)} className="h-7 text-xs w-20" />
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        if (!scheduleDate) return
+                        const when = new Date(`${scheduleDate}T${scheduleTime}:00`)
+                        if (isNaN(when.getTime()) || when.getTime() < Date.now()) { toast.error('Pick a future moment'); return }
+                        void sendReply(when)
+                        setScheduleForOpen(false); setScheduleDate('')
+                      }}
+                      disabled={!scheduleDate || sending}
+                      className="h-7 text-xs"
+                    >
+                      Schedule
+                    </Button>
+                    <button onClick={() => setScheduleForOpen(false)} className="text-muted-foreground hover:text-red-600 px-1"><X className="h-3.5 w-3.5" /></button>
+                  </div>
+                ) : (
+                  <Button onClick={() => setScheduleForOpen(true)} disabled={sending || !draft.trim()} size="sm" variant="outline" className="gap-1.5" title="Send later">
+                    <Clock className="h-3.5 w-3.5" />
+                  </Button>
+                )}
                 <Button onClick={() => void sendReply()} disabled={sending || !draft.trim()} size="sm" className="gap-1.5">
                   {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                   Send

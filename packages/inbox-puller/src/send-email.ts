@@ -231,10 +231,15 @@ async function recordEvent(emailId: string, eventType: string, metadata: Record<
 
 export async function pollOutreach() {
   // Pull a small batch each tick so a backlog drains gradually.
+  // approved + (no schedule OR schedule is now-or-past).
+  // Postgres's `or` filter syntax via postgrest: scheduled_for.is.null
+  // OR scheduled_for.lte.now(). Use a single .or() clause.
+  const nowIso = new Date().toISOString()
   const { data: rows, error } = await supabase
     .from('crm_outreach_emails')
     .select('id, tracking_id, lead_id, subject, body, from_email, in_reply_to, email_references, sent_message_id, attachment_storage_paths, cc, bcc')
     .eq('status', 'approved')
+    .or(`scheduled_for.is.null,scheduled_for.lte.${nowIso}`)
     .order('created_at', { ascending: true })
     .limit(20)
   if (error) {
