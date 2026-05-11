@@ -243,28 +243,35 @@ export async function analyzeSite(
   const analysisId = row.id
 
   try {
-    // 2. Fetch the site HTML
+    // 2. Fetch the site HTML via the worker's server-side fetch endpoint.
+    // (Replaces the old "AI imagines the site" fallback. The worker has
+    // no CORS constraints and applies a 2 MB cap + 15s timeout + SSRF
+    // protection.)
     options?.onStatusChange?.('crawling', 'Fetching website HTML…')
     let html = ''
+    let pageTitle: string | null = null
+    let pageDescription: string | null = null
     try {
-      // Use the model-router's /api/analyze-site endpoint if available,
-      // otherwise fall back to a CORS-friendly proxy or direct fetch.
-      const proxyRes = await fetch('/api/ai/route', {
+      const { data: session } = await supabase.auth.getSession()
+      const token = session.session?.access_token
+      const fetchRes = await fetch('/api/site-analyzer/fetch', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          task: {
-            type: 'reasoning',
-            messages: [{ role: 'user', content: `Fetch and analyze this website: ${url}\n\nI need you to visit ${url} and analyze its HTML/content. Based on publicly available information about this domain and typical websites in this space, provide a comprehensive analysis.\n\nReturn ONLY valid JSON with this structure:\n${JSON.stringify(getAnalysisSchema(), null, 2)}` }],
-          },
-        }),
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ url }),
       })
-      if (proxyRes.ok) {
-        const proxyData = await proxyRes.json()
-        html = proxyData.data?.content || ''
+      if (fetchRes.ok) {
+        const data = await fetchRes.json() as { text?: string; html?: string; title?: string; description?: string }
+        // Prefer the worker-extracted plain text — it's already capped at
+        // 50 KB and fits comfortably in the AI context window.
+        html = data.text || data.html || ''
+        pageTitle = data.title ?? null
+        pageDescription = data.description ?? null
       }
     } catch {
-      // Proxy unavailable — continue with AI-only analysis
+      // Worker unreachable — fall back to AI-only analysis (degraded).
     }
 
     // 3. AI analysis (the core of v1 — AI infers from domain knowledge)
@@ -275,7 +282,13 @@ export async function analyzeSite(
     const runtime = await getCRMRuntimeSettings()
     const companyCtx = buildCompanyContext(runtime)
 
-    const analysisPrompt = buildAnalysisPrompt(url, domain, html, companyCtx)
+    // Inject worker-extracted meta at the top of the AI context so the
+    // model isn't guessing what the homepage's <title>/<meta description>
+    // claim. Falls through gracefully if the worker didn't return them.
+    const metaPrefix = (pageTitle || pageDescription)
+      ? `Homepage <title>: ${pageTitle ?? '(missing)'}\nMeta description: ${pageDescription ?? '(missing)'}\n\n`
+      : ''
+    const analysisPrompt = buildAnalysisPrompt(url, domain, metaPrefix + html, companyCtx)
 
     const result = await callAIJSON<AnalysisResult>(analysisPrompt, {
       maxTokens: 4000,

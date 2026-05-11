@@ -93,9 +93,14 @@ export default function SiteAnalyzer() {
   const [analyses, setAnalyses] = useState<SiteAnalysis[]>([])
   const [loading, setLoading] = useState(true)
   const [analyzing, setAnalyzing] = useState(false)
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [url, setUrl] = useState('')
-  const [selectedLead, setSelectedLead] = useState<string>('')
+  // Pre-fill from URL search params so LeadDetail can deep-link with
+  // ?url=https://acme.com&lead=<uuid>. Opens the dialog immediately.
+  const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
+  const initialUrl = params?.get('url') ?? ''
+  const initialLeadId = params?.get('lead') ?? ''
+  const [dialogOpen, setDialogOpen] = useState(!!initialUrl)
+  const [url, setUrl] = useState(initialUrl)
+  const [selectedLead, setSelectedLead] = useState<string>(initialLeadId)
   const [leads, setLeads] = useState<{ id: string; name: string; company: string; website: string }[]>([])
   const [statusMsg, setStatusMsg] = useState('')
   const [filter, setFilter] = useState<'all' | 'complete' | 'failed' | 'pending'>('all')

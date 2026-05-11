@@ -28,6 +28,7 @@ import { mountAiProxy } from './ai-proxy.js'
 import { mountNomoApi } from './nomo.js'
 import { mountNomoBrief } from './nomo-brief.js'
 import { mountInboxAi } from './inbox-ai.js'
+import { mountSiteAnalyzer } from './site-analyzer.js'
 
 const PORT = parseInt(process.env.WORKER_HTTP_PORT || '3030', 10)
 const JWT_SECRET = process.env.JWT_SECRET || ''
@@ -127,6 +128,11 @@ export function startHttpServer() {
 
   // /api/inbox/{suggest,compose,rewrite} — Phase 12.3 AI compose endpoints.
   mountInboxAi(app)
+
+  // ── Site Analyzer (Phase 12.7 — server-side HTML fetch for the
+  // Site Analyzer module so we feed real content to AI instead of the
+  // "AI imagines what the site probably looks like" fallback). ─────
+  mountSiteAnalyzer(app)
 
   // ── Open-pixel ────────────────────────────────────────────────────────
   app.get('/track/pixel/:idgif', async c => {

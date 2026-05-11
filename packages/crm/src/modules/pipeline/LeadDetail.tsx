@@ -437,6 +437,20 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "recommendation"}`
               Enrich with AI
             </Button>
           )}
+          {lead.website && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const params = new URLSearchParams({ url: lead.website!, lead: lead.id })
+                window.location.href = `/site-analyzer?${params.toString()}`
+              }}
+              title="Open the Site Analyzer pre-filled with this lead's website"
+            >
+              <Globe className="h-3.5 w-3.5 mr-1.5 text-primary" />
+              Analyze site
+            </Button>
+          )}
           <Button
             variant="outline" size="sm"
             onClick={() => window.dispatchEvent(new CustomEvent('nomo:open', {
