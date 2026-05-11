@@ -15,6 +15,50 @@ function log(level: 'info' | 'warn' | 'error', msg: string, extra: Record<string
   console.log(JSON.stringify({ level, msg, source: 'imap', ...extra, time: new Date().toISOString() }))
 }
 
+// Minimal HTML→text fallback for inbound mail without a text/plain part.
+// We don't need full fidelity — the operator reads this in a chat-like UI.
+// Strip scripts/styles, replace block tags with newlines, drop everything
+// else, decode the common HTML entities, collapse whitespace.
+function htmlToText(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<(br|p|div|li|tr|h[1-6])[^>]*>/gi, '\n')
+    .replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x?[0-9a-f]+;/gi, '') // drop other numeric entities
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+// Block IMAP folders that are NOT inbox-shaped — if the operator
+// misconfigures the folder name, every sent/draft/trash row would be
+// ingested as inbound, polluting the CRM in seconds. Better to fail loud.
+const BAD_FOLDER_RE = /(sent|draft|trash|spam|junk|deleted|archive|outbox)/i
+
+// AI-categorize failure tracking — coalesce rate-limited storms so we
+// don't fill the worker log with a million identical lines.
+let lastAiErrorLogAt = 0
+let aiErrorCount = 0
+function logAiCategorizeError(err: unknown) {
+  aiErrorCount++
+  const now = Date.now()
+  if (now - lastAiErrorLogAt < 60_000) return
+  log('warn', 'ai categorize failed', {
+    error: (err as Error).message,
+    suppressed_in_last_minute: aiErrorCount - 1,
+  })
+  lastAiErrorLogAt = now
+  aiErrorCount = 0
+}
+
 export async function pollImap(settings: RuntimeSettings) {
   if (!settings.imap_enabled) return
   if (!settings.imap_host || !settings.imap_username) {
@@ -42,6 +86,11 @@ export async function pollImap(settings: RuntimeSettings) {
   try {
     await client.connect()
     const folder = settings.imap_folder || 'INBOX'
+    if (BAD_FOLDER_RE.test(folder)) {
+      log('error', 'refusing to poll non-inbox folder', { folder })
+      await markImapError(`Refusing to poll '${folder}' — must be an inbox-shaped folder, not Sent/Draft/Trash/etc.`)
+      return
+    }
     const lock = await client.getMailboxLock(folder)
     try {
       // First-time sync (last_uid=0): fetch only the most recent 50 messages,
@@ -74,7 +123,13 @@ export async function pollImap(settings: RuntimeSettings) {
             ? parsed.to[0]?.value?.[0]?.address ?? null
             : parsed.to?.value?.[0]?.address ?? null
           const subject = parsed.subject ?? null
-          const body = parsed.text ?? parsed.html?.toString() ?? ''
+          // Prefer text/plain. If absent, derive plain text from the HTML
+          // part. Falls back to mailparser's textAsHtml-derived text if
+          // present (which is a server-side render of the html).
+          let body = parsed.text ?? ''
+          if (!body && parsed.html) {
+            body = htmlToText(typeof parsed.html === 'string' ? parsed.html : parsed.html.toString())
+          }
 
           // ── Auto-response detection (RFC 3834 + de-facto standards).
           // Headers we honor:
@@ -135,7 +190,7 @@ export async function pollImap(settings: RuntimeSettings) {
                   ai_suggested_reply: ai.suggested_reply,
                 })
               }
-            }).catch(() => { /* swallow */ })
+            }).catch(logAiCategorizeError)
           }
         } catch (err) {
           log('error', 'failed to parse/insert message', { uid: item.uid, error: (err as Error).message })
