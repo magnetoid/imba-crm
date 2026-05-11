@@ -81,9 +81,55 @@ interface TemplateRow { id: string; name: string; subject: string | null; conten
 
 interface LeadRow { id: string; name: string; email: string | null; company: string | null }
 
-type Tab = 'all' | 'needs_reply' | 'fyi' | 'sent' | 'snoozed'
+type Tab = 'all' | 'needs_reply' | 'fyi' | 'sent' | 'snoozed' | 'drafts'
 
 const CACHE_KEY = 'inbox_threads_cache_v2'
+const DRAFT_KEY_PREFIX = 'inbox_draft_v1_'   // localStorage per thread_key (or __new)
+
+interface PersistedDraft {
+  body: string
+  subject: string
+  to: string
+  cc: string
+  bcc: string
+  showCc: boolean
+  showBcc: boolean
+  updated_at: string
+}
+function loadDraft(key: string): PersistedDraft | null {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY_PREFIX + key)
+    return raw ? JSON.parse(raw) as PersistedDraft : null
+  } catch { return null }
+}
+function saveDraft(key: string, d: Omit<PersistedDraft, 'updated_at'>) {
+  try {
+    // Empty draft → delete the key (so empty composers don't leave litter).
+    if (!d.body && !d.subject && !d.cc && !d.bcc && !d.to) {
+      localStorage.removeItem(DRAFT_KEY_PREFIX + key)
+      return
+    }
+    localStorage.setItem(DRAFT_KEY_PREFIX + key, JSON.stringify({ ...d, updated_at: new Date().toISOString() }))
+  } catch { /* private mode */ }
+}
+function deleteDraft(key: string) {
+  try { localStorage.removeItem(DRAFT_KEY_PREFIX + key) } catch { /* */ }
+}
+function listDrafts(): Array<{ key: string; draft: PersistedDraft }> {
+  const out: Array<{ key: string; draft: PersistedDraft }> = []
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (!k?.startsWith(DRAFT_KEY_PREFIX)) continue
+      const raw = localStorage.getItem(k)
+      if (!raw) continue
+      try {
+        out.push({ key: k.slice(DRAFT_KEY_PREFIX.length), draft: JSON.parse(raw) as PersistedDraft })
+      } catch { /* ignore */ }
+    }
+  } catch { /* */ }
+  return out.sort((a, b) => (b.draft.updated_at || '').localeCompare(a.draft.updated_at || ''))
+}
 const MESSAGE_CACHE_MAX = 50           // LRU size cap (~50 threads × ~50 msgs)
 const MESSAGE_CACHE = new Map<string, MessageRow[]>()  // in-memory, by thread_key
 // JS Maps preserve insertion order — re-set on access to move to "newest",
@@ -136,6 +182,7 @@ export default function AIInbox() {
   const [draftTo,  setDraftTo]  = useState('')
   const [composeNewOpen, setComposeNewOpen] = useState(false)
   const [sending, setSending] = useState(false)
+  const [draftsList, setDraftsList] = useState<Array<{ key: string; draft: PersistedDraft }>>(() => listDrafts())
   const [suggestions, setSuggestions] = useState<Array<{ label: string; text: string }> | null>(null)
   const [suggestBusy, setSuggestBusy] = useState(false)
   const [rewriteBusy, setRewriteBusy] = useState(false)
@@ -192,6 +239,25 @@ export default function AIInbox() {
 
   useEffect(() => { void fetchThreads('delta') }, [fetchThreads])
 
+  // Autosave drafts to localStorage on every composer-field change.
+  // Keyed by thread_key (replies) or '__new' (compose-new). Debounced by
+  // React's render cycle — useEffect fires after state settles.
+  useEffect(() => {
+    if (!selectedKey && !composeNewOpen) return
+    const key = composeNewOpen ? '__new' : (selectedKey ?? '')
+    if (!key) return
+    saveDraft(key, {
+      body: draft,
+      subject: draftSubject,
+      to: draftTo,
+      cc: draftCc,
+      bcc: draftBcc,
+      showCc, showBcc,
+    })
+    // Re-list drafts so the badge updates.
+    setDraftsList(listDrafts())
+  }, [draft, draftSubject, draftTo, draftCc, draftBcc, showCc, showBcc, selectedKey, composeNewOpen])
+
   // Load templates + outbound from-address once. smtp_from_email is what
   // we stamp onto outbound mirror rows so the "from" attribution is
   // accurate in the thread view.
@@ -216,8 +282,17 @@ export default function AIInbox() {
     setSelectedKey(key)
     activeFetchRef.current = key
     setSuggestions(null)
-    setDraft('')
     setComposePrompt('')
+    // Restore persisted draft for this thread (if any) so a half-written
+    // reply survives reloads and tab switches.
+    const persisted = loadDraft(key)
+    setDraft(persisted?.body ?? '')
+    setDraftSubject(persisted?.subject ?? '')
+    setDraftTo(persisted?.to ?? '')
+    setDraftCc(persisted?.cc ?? '')
+    setDraftBcc(persisted?.bcc ?? '')
+    setShowCc(persisted?.showCc ?? false)
+    setShowBcc(persisted?.showBcc ?? false)
 
     const cached = lruGet(key)
     if (cached) {
@@ -407,13 +482,15 @@ export default function AIInbox() {
     setMessages([])
     setLead(null)
     setComposeNewOpen(true)
-    setDraft('')
-    setDraftTo('')
-    setDraftCc('')
-    setDraftBcc('')
-    setShowCc(false)
-    setShowBcc(false)
-    setDraftSubject('')
+    // Restore any persisted new-message draft.
+    const persisted = loadDraft('__new')
+    setDraft(persisted?.body ?? '')
+    setDraftTo(persisted?.to ?? '')
+    setDraftCc(persisted?.cc ?? '')
+    setDraftBcc(persisted?.bcc ?? '')
+    setShowCc(persisted?.showCc ?? false)
+    setShowBcc(persisted?.showBcc ?? false)
+    setDraftSubject(persisted?.subject ?? '')
     setPendingAttachments([])
     // Defer focus until the input mounts.
     setTimeout(() => { (document.querySelector('input[data-compose-to]') as HTMLInputElement | null)?.focus() }, 50)
@@ -474,6 +551,8 @@ export default function AIInbox() {
       },
     })
     setSending(false)
+    deleteDraft('__new')
+    setDraftsList(listDrafts())
     toast.success('New message queued')
     closeComposeNew()
     void fetchThreads('delta')
@@ -610,6 +689,8 @@ export default function AIInbox() {
     setShowBcc(false)
     setSuggestions(null)
     setPendingAttachments([])
+    if (selectedKey) deleteDraft(selectedKey)
+    setDraftsList(listDrafts())
     toast.success('Reply queued — outbound worker will send within a minute')
     // Refresh this thread (clears in-memory cache so latest outbound shows).
     MESSAGE_CACHE.delete(selectedKey)
@@ -657,9 +738,12 @@ export default function AIInbox() {
             <Input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Search… (⌘K)" className="h-8 pl-8 text-sm" />
           </div>
-          <div className="flex gap-1 text-[11px]">
-            {(['all','needs_reply','fyi','sent','snoozed'] as Tab[]).map(t => {
-              const labels: Record<Tab, string> = { all: 'All', needs_reply: 'Needs reply', fyi: 'FYI', sent: 'Sent', snoozed: 'Snoozed' }
+          <div className="flex gap-1 text-[11px] flex-wrap">
+            {(['all','needs_reply','fyi','sent','snoozed','drafts'] as Tab[]).map(t => {
+              const labels: Record<Tab, string> = {
+                all: 'All', needs_reply: 'Needs reply', fyi: 'FYI', sent: 'Sent',
+                snoozed: 'Snoozed', drafts: `Drafts${draftsList.length ? ` (${draftsList.length})` : ''}`,
+              }
               return (
                 <button key={t} onClick={() => setTab(t)}
                   className={`px-2 py-1 rounded font-mono transition-colors ${
@@ -671,7 +755,45 @@ export default function AIInbox() {
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {filteredThreads.length === 0 ? (
+          {tab === 'drafts' ? (
+            // Drafts list — auto-saved local drafts keyed by thread_key
+            // (or '__new' for compose-new). Click → resume the draft in
+            // the appropriate compose flow.
+            draftsList.length === 0 ? (
+              <div className="text-center text-muted-foreground p-8">
+                <InboxIcon className="h-8 w-8 mx-auto opacity-30 mb-3" />
+                <p className="text-xs">No drafts. Anything you start typing is auto-saved here.</p>
+              </div>
+            ) : (
+              draftsList.map(({ key, draft: d }) => (
+                <div key={key} className="w-full text-left p-3 border-b border-border hover:bg-muted/30 group">
+                  <button
+                    onClick={() => key === '__new' ? openComposeNew() : void openThread(key)}
+                    className="w-full text-left"
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <p className="text-xs font-medium truncate">
+                        {key === '__new' ? '(new message)' : `↩ ${key.slice(0, 30)}`}
+                      </p>
+                      <span className="text-[10px] text-muted-foreground flex-shrink-0">
+                        {new Date(d.updated_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground truncate">
+                      {d.subject || d.body?.slice(0, 80) || '(empty)'}
+                    </p>
+                    {d.to && <p className="text-[10px] text-muted-foreground/70 truncate">To: {d.to}</p>}
+                  </button>
+                  <button
+                    onClick={() => { deleteDraft(key); setDraftsList(listDrafts()) }}
+                    className="text-[10px] text-muted-foreground hover:text-red-600 mt-1 opacity-0 group-hover:opacity-100"
+                  >
+                    Discard
+                  </button>
+                </div>
+              ))
+            )
+          ) : filteredThreads.length === 0 ? (
             <div className="text-center text-muted-foreground p-8">
               <InboxIcon className="h-8 w-8 mx-auto opacity-30 mb-3" />
               <p className="text-xs">{threads.length === 0 ? 'No mail yet — configure IMAP in Settings.' : 'No threads match this filter.'}</p>
