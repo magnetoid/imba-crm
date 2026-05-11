@@ -198,6 +198,12 @@ export default function AIInbox() {
   const [messages, setMessages] = useState<MessageRow[]>([])
   const [lead, setLead] = useState<LeadRow | null>(null)
   const [leadSignals, setLeadSignals] = useState<SignalRow[]>([])
+  // Per-outreach event rollup keyed by outreach_id.
+  // { opened_count, last_opened_at, clicked_count, last_clicked_at }
+  const [trackingByOutreach, setTrackingByOutreach] = useState<Record<string, {
+    opened_count: number; last_opened_at: string | null;
+    clicked_count: number; last_clicked_at: string | null;
+  }>>({})
   const [loadingThread, setLoadingThread] = useState(false)
   const [draft, setDraft] = useState('')
   const [draftCc,  setDraftCc]  = useState('')
@@ -268,6 +274,39 @@ export default function AIInbox() {
   }
 
   useEffect(() => { void fetchThreads('delta') }, [fetchThreads])
+
+  // Load open/click rollup for outbound messages whenever the thread's
+  // message list changes. Joined by metadata.outreach_id (when present).
+  useEffect(() => {
+    const outreachIds = messages
+      .map(m => (m.metadata as { outreach_id?: string } | null)?.outreach_id)
+      .filter((x): x is string => !!x)
+    if (outreachIds.length === 0) { setTrackingByOutreach({}); return }
+    void (async () => {
+      const { data } = await supabase
+        .from('crm_email_events')
+        .select('email_id, event_type, created_at')
+        .in('email_id', outreachIds)
+      const events = (data as Array<{ email_id: string; event_type: string; created_at: string }> | null) ?? []
+      const rollup: Record<string, { opened_count: number; last_opened_at: string | null; clicked_count: number; last_clicked_at: string | null }> = {}
+      for (const id of outreachIds) {
+        rollup[id] = { opened_count: 0, last_opened_at: null, clicked_count: 0, last_clicked_at: null }
+      }
+      for (const ev of events) {
+        const r = rollup[ev.email_id]
+        if (!r) continue
+        if (ev.event_type === 'opened') {
+          r.opened_count++
+          if (!r.last_opened_at || ev.created_at > r.last_opened_at) r.last_opened_at = ev.created_at
+        }
+        if (ev.event_type === 'clicked') {
+          r.clicked_count++
+          if (!r.last_clicked_at || ev.created_at > r.last_clicked_at) r.last_clicked_at = ev.created_at
+        }
+      }
+      setTrackingByOutreach(rollup)
+    })()
+  }, [messages])
 
   // Autosave drafts to localStorage on every composer-field change.
   // Keyed by thread_key (replies) or '__new' (compose-new). Debounced by
@@ -583,6 +622,8 @@ export default function AIInbox() {
       priority: 'normal',
       metadata: {
         scheduled_for: effectiveScheduledFor.toISOString(),
+        outreach_id: outreachId,
+        tracking_id: trackingId,
         attachments: pendingAttachments.map(a => ({
           filename: a.filename, size_bytes: a.size_bytes,
           mime: 'application/octet-stream', storage_path: a.path,
@@ -747,6 +788,8 @@ export default function AIInbox() {
         in_reply_to: lastInboundMessageId,
         references,
         scheduled_for: effectiveScheduledFor.toISOString(),
+        outreach_id: outreachId,              // for joining crm_email_events
+        tracking_id: trackingId,
         attachments: pendingAttachments.map(a => ({
           filename: a.filename,
           size_bytes: a.size_bytes,
@@ -1156,17 +1199,16 @@ export default function AIInbox() {
 
             <div className="flex-1 overflow-y-auto p-5 space-y-3">
               {messages.map((m, idx) => {
-                // The inbox-replier agent pre-computes ai_suggested_reply
-                // on the latest inbound. Surface it as a one-tap chip
-                // ONLY on that row — older suggestions are stale.
                 const isLatestInbound = m.direction === 'inbound'
                   && messages.slice(idx + 1).every(later => later.direction !== 'inbound')
+                const outreachId = (m.metadata as { outreach_id?: string } | null)?.outreach_id ?? null
                 return (
                   <MessageCard
                     key={m.id}
                     message={m}
                     showSuggestion={isLatestInbound}
                     onUseSuggestion={(text) => { setDraft(text); composerRef.current?.focus() }}
+                    tracking={outreachId ? trackingByOutreach[outreachId] : undefined}
                   />
                 )
               })}
@@ -1655,6 +1697,23 @@ interface MessageCardProps {
   message: MessageRow
   showSuggestion?: boolean
   onUseSuggestion?: (text: string) => void
+  tracking?: {
+    opened_count: number; last_opened_at: string | null
+    clicked_count: number; last_clicked_at: string | null
+  }
+}
+
+function formatRelative(iso: string | null): string {
+  if (!iso) return ''
+  const diffMs = Date.now() - new Date(iso).getTime()
+  const m = Math.floor(diffMs / 60_000)
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  const d = Math.floor(h / 24)
+  if (d < 7) return `${d}d ago`
+  return new Date(iso).toLocaleDateString()
 }
 
 function formatBytes(n: number): string {
@@ -1671,7 +1730,7 @@ async function openAttachment(path: string) {
   window.open(data.signedUrl, '_blank')
 }
 
-function MessageCard({ message, showSuggestion = false, onUseSuggestion }: MessageCardProps) {
+function MessageCard({ message, showSuggestion = false, onUseSuggestion, tracking }: MessageCardProps) {
   const [expanded, setExpanded] = useState(true)
   const [showQuoted, setShowQuoted] = useState(false)
   const isInbound = message.direction === 'inbound'
@@ -1709,6 +1768,28 @@ function MessageCard({ message, showSuggestion = false, onUseSuggestion }: Messa
       </button>
       {expanded && (
         <div className="border-t border-border px-3 py-3">
+          {/* Outbound open/click tracking chips. Only shown when we have
+              the outreach_id link in metadata (recent sends; legacy rows
+              without it are silent rather than misleading). */}
+          {!isInbound && tracking && (tracking.opened_count > 0 || tracking.clicked_count > 0) && (
+            <div className="mb-2 flex items-center gap-2 flex-wrap text-[10px]">
+              {tracking.opened_count > 0 && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono"
+                  title={`Last opened ${formatRelative(tracking.last_opened_at)}`}>
+                  👀 Opened {tracking.opened_count}× · {formatRelative(tracking.last_opened_at)}
+                </span>
+              )}
+              {tracking.clicked_count > 0 && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 font-mono"
+                  title={`Last clicked ${formatRelative(tracking.last_clicked_at)}`}>
+                  🔗 Clicked {tracking.clicked_count}× · {formatRelative(tracking.last_clicked_at)}
+                </span>
+              )}
+            </div>
+          )}
+          {!isInbound && tracking && tracking.opened_count === 0 && tracking.clicked_count === 0 && (
+            <div className="mb-2 text-[10px] text-muted-foreground/70 font-mono">📭 Not yet opened</div>
+          )}
           <pre className="text-sm whitespace-pre-wrap font-sans">{current}</pre>
           {quoted && (
             <div className="mt-2">
