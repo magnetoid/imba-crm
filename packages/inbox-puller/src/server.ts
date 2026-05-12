@@ -29,6 +29,7 @@ import { mountNomoApi } from './nomo.js'
 import { mountNomoBrief } from './nomo-brief.js'
 import { mountInboxAi } from './inbox-ai.js'
 import { mountSiteAnalyzer } from './site-analyzer.js'
+import { mountOG } from './og.js'
 
 const PORT = parseInt(process.env.WORKER_HTTP_PORT || '3030', 10)
 const JWT_SECRET = process.env.JWT_SECRET || ''
@@ -180,6 +181,9 @@ export function startHttpServer() {
   // Site Analyzer module so we feed real content to AI instead of the
   // "AI imagines what the site probably looks like" fallback). ─────
   mountSiteAnalyzer(app)
+
+  // ── Open Graph endpoints (link preview + shareable lead cards) ──
+  mountOG(app)
 
   // ── Open-pixel ────────────────────────────────────────────────────────
   app.get('/track/pixel/:idgif', async c => {
