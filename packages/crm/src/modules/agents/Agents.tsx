@@ -46,11 +46,19 @@ export default function Agents() {
   }, [])
   useEffect(() => { load() }, [load])
 
-  // Auto-refresh every 5 s — operators expect to see new awaiting_approval
-  // rows show up without a manual reload.
+  // Realtime: react to job status changes (and new rows) without
+  // polling. Plus a 30s safety-net interval in case the websocket drops.
   useEffect(() => {
-    const t = setInterval(() => load(), 5000)
-    return () => clearInterval(t)
+    const channel = supabase
+      .channel('agents-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'crm_agent_jobs' },
+        () => load(),
+      )
+      .subscribe()
+    const t = setInterval(() => load(), 30_000)
+    return () => { void supabase.removeChannel(channel); clearInterval(t) }
   }, [load])
 
   async function quickStart(kind: string, input: Record<string, unknown>) {

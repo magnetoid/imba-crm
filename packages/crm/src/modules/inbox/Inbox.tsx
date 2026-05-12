@@ -275,6 +275,21 @@ export default function AIInbox() {
 
   useEffect(() => { void fetchThreads('delta') }, [fetchThreads])
 
+  // Realtime: new inbound messages trigger a delta-fetch so the list
+  // updates without manual refresh. Bounded subscription — one channel
+  // per session, torn down on unmount.
+  useEffect(() => {
+    const channel = supabase
+      .channel('inbox-realtime')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'crm_inbox_messages', filter: 'direction=eq.inbound' },
+        () => { void fetchThreads('delta') },
+      )
+      .subscribe()
+    return () => { void supabase.removeChannel(channel) }
+  }, [fetchThreads])
+
   // Load open/click rollup for outbound messages whenever the thread's
   // message list changes. Joined by metadata.outreach_id (when present).
   useEffect(() => {
