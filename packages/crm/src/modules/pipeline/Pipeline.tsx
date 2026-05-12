@@ -16,6 +16,7 @@ import toast from 'react-hot-toast'
 import { autoScoreLead, logActivity, requestNotificationPermission, showNotification } from '@/lib/crm-utils'
 import { logGeneration } from '@/lib/aiGenerations'
 import NomoBrief from './NomoBrief'
+import OnboardingCard from './OnboardingCard'
 
 export interface CRMLead {
   id: string
@@ -616,6 +617,9 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
           </Button>
         </div>
       </div>
+
+      {/* First-run onboarding (only renders when something is missing) */}
+      <OnboardingCard leadsCount={leads.length} />
 
       {/* Nomo daily brief */}
       <NomoBrief />
