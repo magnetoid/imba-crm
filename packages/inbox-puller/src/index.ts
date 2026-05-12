@@ -17,6 +17,21 @@ const DEFAULT_INTERVAL_S = 60
 const MIN_INTERVAL_S = 15
 const MAX_INTERVAL_S = 3600
 
+// Worker uptime + last-tick bookkeeping. Read by the /healthz endpoint
+// in server.ts so operators can verify the worker is alive without
+// having to ssh into the container and tail logs.
+export const workerState: {
+  started_at_ms: number
+  last_tick_at_ms: number
+  last_tick_duration_ms: number
+  consecutive_failures: number
+} = {
+  started_at_ms: Date.now(),
+  last_tick_at_ms: 0,
+  last_tick_duration_ms: 0,
+  consecutive_failures: 0,
+}
+
 let stopping = false
 process.on('SIGTERM', () => { stopping = true; log('info', 'sigterm received, will exit after current cycle') })
 process.on('SIGINT',  () => { stopping = true; log('info', 'sigint received, will exit after current cycle') })
@@ -42,10 +57,41 @@ async function tick(): Promise<number> {
     runSignalWatchers(),
     refreshMailReachHealth(),
     maybeQueueStaleProposalDrafts(),
+    sweepStuckJobs(),                                  // S2.7
   ])
 
   const requested = settings.imap_poll_seconds || DEFAULT_INTERVAL_S
-  return Math.max(MIN_INTERVAL_S, Math.min(MAX_INTERVAL_S, requested))
+  const clamped = Math.max(MIN_INTERVAL_S, Math.min(MAX_INTERVAL_S, requested))
+  // ±10% jitter so multi-replica deploys don't stampede the DB at the
+  // same exact second. Compute fresh each tick.
+  const jitterPct = 0.9 + Math.random() * 0.2
+  return Math.round(clamped * jitterPct)
+}
+
+// Stuck-job sweeper. Any agent_job in status='running' with
+// updated_at > 15 minutes ago is presumed crashed mid-step. Marks it
+// failed with a clear error string so the operator sees it in the
+// Agents UI instead of it sitting silent forever.
+let lastStuckSweep = 0
+const STUCK_SWEEP_INTERVAL_MS = 5 * 60 * 1000
+async function sweepStuckJobs() {
+  const now = Date.now()
+  if (now - lastStuckSweep < STUCK_SWEEP_INTERVAL_MS) return
+  lastStuckSweep = now
+  const cutoff = new Date(now - 15 * 60 * 1000).toISOString()
+  const { data, error } = await supabase
+    .from('crm_agent_jobs')
+    .update({
+      status: 'failed',
+      error: 'stalled — no heartbeat for 15 minutes',
+      finished_at: new Date().toISOString(),
+    })
+    .eq('status', 'running')
+    .lt('updated_at', cutoff)
+    .select('id')
+  if (error) { log('warn', 'stuck-job sweep failed', { error: error.message }); return }
+  const swept = (data as Array<{ id: string }> | null)?.length ?? 0
+  if (swept > 0) log('warn', 'marked stalled jobs as failed', { count: swept })
 }
 
 // Once per ~24h enqueue a deal-health-scorer sweep job (no lead_id).
@@ -127,9 +173,21 @@ async function main() {
     let nextDelay = DEFAULT_INTERVAL_S
     try {
       nextDelay = await tick()
+      workerState.consecutive_failures = 0
     } catch (err) {
       log('error', 'tick threw', { error: (err as Error).message })
+      workerState.consecutive_failures++
+      // Exponential backoff after 3 consecutive failures: 1×, 2×, 4×,
+      // 8×, capped at MAX_INTERVAL_S. Recovers immediately on first
+      // successful tick.
+      if (workerState.consecutive_failures > 3) {
+        const factor = Math.min(2 ** (workerState.consecutive_failures - 3), 16)
+        nextDelay = Math.min(MAX_INTERVAL_S, nextDelay * factor)
+        log('warn', 'backoff engaged', { factor, next_delay_s: nextDelay, failures: workerState.consecutive_failures })
+      }
     }
+    workerState.last_tick_at_ms = Date.now()
+    workerState.last_tick_duration_ms = workerState.last_tick_at_ms - start
     if (stopping) break
     const elapsed = (Date.now() - start) / 1000
     const sleepFor = Math.max(0, nextDelay - elapsed)

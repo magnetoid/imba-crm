@@ -11,13 +11,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@imba/shared/ui/textarea'
 
 import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd'
-import { Plus, Loader2, Sparkles, Users, TrendingUp, DollarSign, Target, ArrowRight, Import, Trophy, ChevronRight, ChevronLeft, Bell, GripVertical } from 'lucide-react'
+import { Plus, Loader2, Sparkles, Users, TrendingUp, DollarSign, Target, ArrowRight, Import, Trophy, ChevronRight, ChevronLeft, Bell, GripVertical, AlertCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { autoScoreLead, logActivity, requestNotificationPermission, showNotification } from '@/lib/crm-utils'
 import { logGeneration } from '@/lib/aiGenerations'
 import { logError } from '@/lib/logError'
 import NomoBrief from './NomoBrief'
 import OnboardingCard from './OnboardingCard'
+import WorkerHealthCard from './WorkerHealthCard'
+import { useCostCapState } from '@/lib/useCostCapState'
 
 export interface CRMLead {
   id: string
@@ -619,6 +621,12 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
         </div>
       </div>
 
+      {/* Cost-cap banner (renders only when triggered) */}
+      <CostCapBanner />
+
+      {/* Worker health snapshot — single line, click to expand */}
+      <WorkerHealthCard />
+
       {/* First-run onboarding (only renders when something is missing) */}
       <OnboardingCard leadsCount={leads.length} />
 
@@ -1199,6 +1207,29 @@ function FitIntentPip({ fit, intent }: { fit?: number; intent?: number }) {
       <span className="text-xs font-mono font-bold" style={{ color: c(fit) }}>{fit ?? '—'}</span>
       <span className="text-xs font-mono text-muted-foreground">/</span>
       <span className="text-xs font-mono font-bold" style={{ color: c(intent) }}>{intent ?? '—'}</span>
+    </div>
+  )
+}
+
+// ── Cost-cap banner ────────────────────────────────────────────────
+// Renders a sticky red banner when ai_cap_state is non-null. Operator
+// sees immediately "AI spend cap hit" with a deep-link to Settings.
+function CostCapBanner() {
+  const cap = useCostCapState()
+  if (!cap) return null
+  const pct = Math.min(999, Math.round((cap.current_cents / Math.max(1, cap.cap_cents)) * 100))
+  return (
+    <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2.5">
+      <AlertCircle className="h-4 w-4 text-red-700 mt-0.5 flex-shrink-0" />
+      <div className="flex-1 text-xs text-red-900">
+        <strong>AI spend cap hit</strong> — ${(cap.current_cents / 100).toFixed(2)} of ${(cap.cap_cents / 100).toFixed(2)} ({pct}%). New AI calls will {cap.action === 'block' ? 'fail' : cap.action === 'downgrade' ? 'fall back to a cheaper model' : 'require approval'}.
+      </div>
+      <a
+        href="/admin/crm/settings#caps"
+        className="text-xs px-3 py-1 rounded bg-red-700 text-white hover:opacity-90 flex-shrink-0"
+      >
+        Open Cost & limits →
+      </a>
     </div>
   )
 }

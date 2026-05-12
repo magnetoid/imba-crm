@@ -168,10 +168,31 @@ export async function callAI<T = string>(prompt: string, options?: AIRequestOpti
     currentCost = (costData || []).reduce((sum, row) => sum + (row.cost_cents || 0), 0);
     
     if (currentCost >= settings.ai_monthly_cap_cents) {
+      // Persist cost-cap state so the SPA banner can surface it.
+      // Best-effort: don't let a settings write failure break the call.
+      try {
+        await supabase.from('crm_runtime_settings').update({
+          ai_cap_state: {
+            triggered_at:  new Date().toISOString(),
+            current_cents: currentCost,
+            cap_cents:     settings.ai_monthly_cap_cents,
+            period_start:  startOfMonth.toISOString(),
+            action:        settings.ai_cap_action || 'block',
+          },
+        }).eq('id', 1)
+      } catch { /* swallow — banner just won't show */ }
+
       if (settings.ai_cap_action === 'block') {
         throw new Error(`AI Cost Cap Exceeded: The organization has reached its monthly limit of $${(settings.ai_monthly_cap_cents / 100).toFixed(2)}.`);
       } else if (settings.ai_cap_action === 'downgrade') {
         options = { ...options, provider: 'anthropic', model: 'claude-3-haiku-20240307' };
+      }
+    } else {
+      // Below cap — clear any stale ai_cap_state from a previous month.
+      const cap = (settings as unknown as { ai_cap_state?: { period_start?: string } | null }).ai_cap_state
+      if (cap?.period_start && new Date(cap.period_start).getTime() < startOfMonth.getTime()) {
+        try { await supabase.from('crm_runtime_settings').update({ ai_cap_state: null }).eq('id', 1) }
+        catch { /* */ }
       }
     }
   }

@@ -797,12 +797,18 @@ export default function AISettings() {
           The inbox-puller container reads new messages from this mailbox and writes them to the CRM Inbox. Password is stored in <code>crm_provider_credentials</code> with provider = <code>imap</code>.
         </p>
 
-        <div className="flex items-center gap-2 mb-5">
+        <div className="flex items-center gap-2 mb-2">
           <Switch checked={settings.imap_enabled} onCheckedChange={v => setField('imap_enabled', v)} />
           <Label className="font-normal">Enable IMAP polling</Label>
         </div>
+        <LoopHealthChip
+          enabled={!!settings.imap_enabled}
+          lastSyncedAt={(settings as unknown as { imap_last_synced_at?: string | null }).imap_last_synced_at ?? null}
+          lastErrorAt={(settings as unknown as { imap_last_error_at?: string | null }).imap_last_error_at ?? null}
+          lastError={(settings as unknown as { imap_last_error?: string | null }).imap_last_error ?? null}
+        />
 
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-2 gap-4 mt-4 mb-4">
           <div className="flex flex-col gap-1.5"><Label>IMAP Host</Label><Input value={settings.imap_host} onChange={e => setField('imap_host', e.target.value)} placeholder="imap.gmail.com" /></div>
           <div className="flex flex-col gap-1.5"><Label>Port</Label><Input value={settings.imap_port} onChange={e => setField('imap_port', e.target.value)} placeholder="993" /></div>
           <div className="flex flex-col gap-1.5"><Label>Username</Label><Input value={settings.imap_username} onChange={e => setField('imap_username', e.target.value)} placeholder="hi@imbaproduction.com" /></div>
@@ -854,12 +860,18 @@ export default function AISettings() {
           Use only if your host doesn't support IMAP. POP3 has no folders and no per-message flags — read-state is tracked locally by UIDL. Password lives in <code>crm_provider_credentials</code> with provider = <code>pop3</code>.
         </p>
 
-        <div className="flex items-center gap-2 mb-5">
+        <div className="flex items-center gap-2 mb-2">
           <Switch checked={settings.pop3_enabled} onCheckedChange={v => setField('pop3_enabled', v)} />
           <Label className="font-normal">Enable POP3 polling</Label>
         </div>
+        <LoopHealthChip
+          enabled={!!settings.pop3_enabled}
+          lastSyncedAt={(settings as unknown as { pop3_last_synced_at?: string | null }).pop3_last_synced_at ?? null}
+          lastErrorAt={(settings as unknown as { pop3_last_error_at?: string | null }).pop3_last_error_at ?? null}
+          lastError={(settings as unknown as { pop3_last_error?: string | null }).pop3_last_error ?? null}
+        />
 
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-2 gap-4 mt-4 mb-4">
           <div className="flex flex-col gap-1.5"><Label>POP3 Host</Label><Input value={settings.pop3_host} onChange={e => setField('pop3_host', e.target.value)} placeholder="pop.example.com" /></div>
           <div className="flex flex-col gap-1.5"><Label>Port</Label><Input value={settings.pop3_port} onChange={e => setField('pop3_port', e.target.value)} placeholder="995" /></div>
           <div className="flex flex-col gap-1.5"><Label>Username</Label><Input value={settings.pop3_username} onChange={e => setField('pop3_username', e.target.value)} /></div>
@@ -1289,5 +1301,57 @@ function SmtpPresetPicker({ onApply }: { onApply: (p: typeof SMTP_PRESETS[number
         </p>
       )}
     </div>
+  )
+}
+
+// ── Per-loop health chip ─────────────────────────────────────────────
+// Shows operator-readable status next to the IMAP/POP3 enable toggle:
+//   green  "✓ Last poll 2m ago"
+//   red    "✗ Last error 5m ago: 535 auth failed"
+//   grey   "disabled"
+function fmtAge(iso: string | null | undefined): string {
+  if (!iso) return 'never'
+  const ms = Date.now() - new Date(iso).getTime()
+  if (ms < 60_000) return 'just now'
+  if (ms < 3600_000) return `${Math.floor(ms / 60_000)}m ago`
+  if (ms < 86400_000) return `${Math.floor(ms / 3600_000)}h ago`
+  return `${Math.floor(ms / 86400_000)}d ago`
+}
+function LoopHealthChip({
+  enabled, lastSyncedAt, lastErrorAt, lastError,
+}: {
+  enabled: boolean
+  lastSyncedAt: string | null
+  lastErrorAt: string | null
+  lastError: string | null
+}) {
+  if (!enabled) {
+    return <span className="text-[10px] font-mono text-muted-foreground">disabled</span>
+  }
+  // Error fresher than success → red
+  const successMs = lastSyncedAt ? new Date(lastSyncedAt).getTime() : 0
+  const errorMs   = lastErrorAt   ? new Date(lastErrorAt).getTime()   : 0
+  const recentError = errorMs > successMs && lastError
+  if (recentError) {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-red-50 border border-red-200 text-[11px] text-red-800" title={lastError}>
+        <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+        Last error {fmtAge(lastErrorAt)}: {lastError.slice(0, 70)}{lastError.length > 70 ? '…' : ''}
+      </span>
+    )
+  }
+  if (lastSyncedAt) {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-800">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+        Last poll {fmtAge(lastSyncedAt)}
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-muted/50 border border-border text-[11px] text-muted-foreground">
+      <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60" />
+      Enabled — waiting for first poll
+    </span>
   )
 }

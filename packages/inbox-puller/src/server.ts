@@ -78,6 +78,49 @@ export function startHttpServer() {
 
   app.get('/healthz', c => c.text('ok'))
 
+  // ── Operator-facing /api/worker/health (JWT-gated) ────────────────
+  // Returns a single-shot snapshot of worker liveness + per-loop
+  // last-success/last-error timestamps so the SPA can render a Worker
+  // Health card. Reads workerState (in-memory) for the heartbeat data
+  // and crm_runtime_settings for the per-channel sync state.
+  app.get('/api/worker/health', async c => {
+    const uid = await verifyAuth(c.req.header('authorization'))
+    if (!uid) return c.json({ error: 'unauthorized' }, 401)
+    const { workerState } = await import('./index.js')
+    const { data: rt } = await supabase
+      .from('crm_runtime_settings')
+      .select('imap_last_synced_at, imap_last_error_at, imap_last_error, pop3_last_synced_at, pop3_last_error_at, pop3_last_error, smtp_inbox_health_at')
+      .eq('id', 1).maybeSingle()
+    const r = (rt ?? {}) as Record<string, unknown>
+    const { count: queuedJobs } = await supabase
+      .from('crm_agent_jobs')
+      .select('id', { count: 'exact', head: true })
+      .in('status', ['queued', 'running', 'awaiting_approval'])
+    const now = Date.now()
+    return c.json({
+      ok: true,
+      now_ms: now,
+      started_at_ms:         workerState.started_at_ms,
+      uptime_s:              Math.floor((now - workerState.started_at_ms) / 1000),
+      last_tick_at_ms:       workerState.last_tick_at_ms,
+      last_tick_age_s:       workerState.last_tick_at_ms ? Math.floor((now - workerState.last_tick_at_ms) / 1000) : null,
+      last_tick_duration_ms: workerState.last_tick_duration_ms,
+      consecutive_failures:  workerState.consecutive_failures,
+      queued_jobs:           queuedJobs ?? 0,
+      imap: {
+        last_synced_at: r.imap_last_synced_at ?? null,
+        last_error_at:  r.imap_last_error_at  ?? null,
+        last_error:     r.imap_last_error     ?? null,
+      },
+      pop3: {
+        last_synced_at: r.pop3_last_synced_at ?? null,
+        last_error_at:  r.pop3_last_error_at  ?? null,
+        last_error:     r.pop3_last_error     ?? null,
+      },
+      smtp_health_at: r.smtp_inbox_health_at ?? null,
+    })
+  })
+
   // ── Embeddable chat widget bootstrap ──────────────────────────────
   // Serve /widget.js from disk. Built by `pnpm --filter @imba/widget build`
   // and copied into the runner image at /app/widget/widget.js.
@@ -240,8 +283,31 @@ export function startHttpServer() {
     try {
       await client.connect()
       const list = (await client.list()).map(b => b.path).slice(0, 10)
+      // Real test: open the configured folder and try to fetch the
+      // newest message envelope. We don't insert anything — this is
+      // strictly a "can we actually pull mail?" probe.
+      const folder = settings.imap_folder || 'INBOX'
+      const lock = await client.getMailboxLock(folder)
+      let fetched = 0
+      let preview: string | null = null
+      try {
+        const status = await client.status(folder, { messages: true })
+        if (status.messages && status.messages > 0) {
+          const lastSeq = status.messages
+          for await (const m of client.fetch(`${lastSeq}:${lastSeq}`, { envelope: true })) {
+            fetched++
+            const e = (m as { envelope?: { subject?: string; from?: Array<{ address?: string }> } }).envelope
+            preview = e?.subject ? `"${e.subject.slice(0, 60)}"` : (e?.from?.[0]?.address ?? null)
+          }
+        }
+      } finally {
+        lock.release()
+      }
       await client.logout()
-      return c.json({ ok: true, message: `IMAP login OK. Folders: ${list.join(', ') || '(none visible)'}` })
+      const msg = fetched > 0
+        ? `IMAP test OK — folder "${folder}" has mail. Most recent: ${preview ?? '(no envelope)'}.`
+        : `IMAP test OK — connected to "${folder}", but it's empty. Folders visible: ${list.join(', ') || '(none)'}`
+      return c.json({ ok: true, message: msg })
     } catch (err) {
       try { await client.logout() } catch { /* ignore */ }
       return c.json({ ok: false, message: (err as Error).message })

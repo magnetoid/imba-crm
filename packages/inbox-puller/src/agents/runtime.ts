@@ -224,7 +224,7 @@ export function buildContext(job: JobRow): AgentContext {
         .eq('id', job.id)
 
       log('info', 'awaiting approval', { jobId: job.id, runId, step: name })
-      const decision = await pollForDecision(runId)
+      const decision = await pollForDecision(runId, job.id)
       if (decision.status === 'approved') {
         await supabase.from('crm_agent_runs').update({
           status: 'done',
@@ -245,8 +245,10 @@ export function buildContext(job: JobRow): AgentContext {
   }
 }
 
-async function pollForDecision(runId: string): Promise<RunRow> {
+async function pollForDecision(runId: string, jobId: string): Promise<RunRow> {
   const deadline = Date.now() + APPROVAL_TIMEOUT_MS
+  let lastHeartbeat = Date.now()
+  const HEARTBEAT_MS = 60_000   // touch updated_at on the job every minute
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, APPROVAL_POLL_MS))
     const { data } = await supabase
@@ -255,6 +257,14 @@ async function pollForDecision(runId: string): Promise<RunRow> {
       .eq('id', runId)
       .maybeSingle()
     const row = data as RunRow | null
+    // Heartbeat — touch the job's updated_at so the stuck-job sweeper
+    // can distinguish "waiting for approval" from "crashed mid-step".
+    // We update the run too (jobs.updated_at trigger may not exist).
+    const now = Date.now()
+    if (now - lastHeartbeat >= HEARTBEAT_MS) {
+      await supabase.from('crm_agent_jobs').update({ updated_at: new Date().toISOString() }).eq('id', jobId)
+      lastHeartbeat = now
+    }
     if (!row) continue
     if (row.status === 'approved' || row.status === 'rejected') return row
   }
