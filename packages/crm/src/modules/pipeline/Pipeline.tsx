@@ -901,7 +901,15 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
           {filtered.length === 0 && (
             <div className="py-12 text-center">
               <Users className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
-              <p className="text-muted-foreground text-sm">No leads yet — add one or import from quote requests.</p>
+              <p className="text-muted-foreground text-sm mb-4">No leads yet.</p>
+              <div className="flex items-center justify-center gap-2">
+                <Button size="sm" onClick={() => window.location.href = '/admin/crm/lead-finder'} className="gap-1">
+                  Find your first prospects
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => { setForm(EMPTY_FORM); setError(''); setAddOpen(true) }} className="gap-1">
+                  Add manually
+                </Button>
+              </div>
             </div>
           )}
         </div>

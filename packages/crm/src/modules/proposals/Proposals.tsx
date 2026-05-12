@@ -299,7 +299,10 @@ Keep it under 600 words.`
       ) : filtered.length === 0 ? (
         <div className="text-center py-24 text-muted-foreground">
           <FileText className="h-10 w-10 mx-auto mb-3 opacity-20" />
-          <p className="text-sm">No proposals yet. Create one with AI or manually.</p>
+          <p className="text-sm mb-4">No proposals yet. Pick a qualified lead and generate one with AI.</p>
+          <a href="/admin/crm/pipeline" className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:opacity-90 transition-opacity">
+            Open pipeline →
+          </a>
         </div>
       ) : (
         <div className="flex flex-col gap-3">

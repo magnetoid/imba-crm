@@ -135,7 +135,10 @@ function SignalsFeed() {
       {signals.length === 0 ? (
         <div className="text-center py-16 text-muted-foreground">
           <Radio className="h-10 w-10 mx-auto mb-3 opacity-30" />
-          <p className="text-sm">No signals yet. Configure Apify / Tavily / BuiltWith in Settings → Integrations and the watchers will populate this feed.</p>
+          <p className="text-sm mb-4">No signals yet. Wire a signal source — funding rounds, hiring posts, news — and the feed populates here.</p>
+          <a href="/admin/crm/settings#integrations" className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:opacity-90 transition-opacity">
+            Configure Integrations →
+          </a>
         </div>
       ) : (
         <div className="space-y-2">

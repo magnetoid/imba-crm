@@ -276,7 +276,10 @@ export default function Invoices() {
       ) : filtered.length === 0 ? (
         <div className="text-center py-24 text-muted-foreground">
           <Receipt className="h-10 w-10 mx-auto mb-3 opacity-20" />
-          <p className="text-sm">No invoices yet. Create one from a signed proposal or manually.</p>
+          <p className="text-sm mb-4">No invoices yet. Sign a proposal first or create one manually.</p>
+          <a href="/admin/crm/proposals" className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:opacity-90 transition-opacity">
+            Open proposals →
+          </a>
         </div>
       ) : (
         <div className="flex flex-col gap-3">
