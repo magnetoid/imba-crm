@@ -3,8 +3,24 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '@imba/shared/supabase'
 import { Button } from '@imba/shared/ui/button'
 import { Badge } from '@imba/shared/ui/badge'
-import { Loader2, Bot, ArrowRight, CheckCircle2, XCircle, AlertCircle, Pause, Clock } from 'lucide-react'
+import { Loader2, Bot, ArrowRight, CheckCircle2, XCircle, AlertCircle, Pause, Clock, History } from 'lucide-react'
 import toast from 'react-hot-toast'
+
+type ActivityTab = 'jobs' | 'audit'
+
+interface AiGeneration {
+  id: string
+  feature: string | null
+  task_type: string | null
+  provider: string | null
+  model: string | null
+  tokens_in: number | null
+  tokens_out: number | null
+  cost_cents: number | null
+  status: string | null
+  created_at: string
+  lead_id: string | null
+}
 
 interface AgentJob {
   id: string
@@ -33,6 +49,17 @@ export default function Agents() {
   const navigate = useNavigate()
   const [jobs, setJobs] = useState<AgentJob[]>([])
   const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState<ActivityTab>(() => {
+    if (typeof window === 'undefined') return 'jobs'
+    return (window.location.hash.replace('#', '') === 'audit') ? 'audit' : 'jobs'
+  })
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.hash !== `#${tab}`) {
+      window.history.replaceState(null, '', `#${tab}`)
+    }
+  }, [tab])
+  const [audit, setAudit] = useState<AiGeneration[]>([])
+  const [auditLoading, setAuditLoading] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -45,6 +72,23 @@ export default function Agents() {
     setLoading(false)
   }, [])
   useEffect(() => { load() }, [load])
+
+  // Audit log loader — pulls ai_generations (the cost+token+model
+  // trail every callAIJSON write). Lazy-loaded when the operator
+  // opens the Audit tab.
+  const loadAudit = useCallback(async () => {
+    setAuditLoading(true)
+    const { data } = await supabase
+      .from('ai_generations')
+      .select('id, feature, task_type, provider, model, tokens_in, tokens_out, cost_cents, status, created_at, lead_id')
+      .order('created_at', { ascending: false })
+      .limit(100)
+    setAudit((data as AiGeneration[]) || [])
+    setAuditLoading(false)
+  }, [])
+  useEffect(() => {
+    if (tab === 'audit' && audit.length === 0) void loadAudit()
+  }, [tab, audit.length, loadAudit])
 
   // Realtime: react to job status changes (and new rows) without
   // polling. Plus a 30s safety-net interval in case the websocket drops.
@@ -92,12 +136,34 @@ export default function Agents() {
           </Button>
         </div>
       </div>
-      <p className="text-muted-foreground text-sm mb-8">
-        Each row is a job an agent ran. In approval mode, the worker pauses
-        after each step and waits for you to approve here.
+      <p className="text-muted-foreground text-sm mb-6">
+        Two views: <strong>Jobs</strong> shows agent runs (lead-finder, outreach-drafter…). <strong>Audit</strong> shows every AI call's cost + tokens + status.
       </p>
 
-      {loading ? (
+      {/* Tab nav */}
+      <div className="flex gap-1 mb-6 border-b border-border">
+        {([['jobs', 'Jobs', Bot], ['audit', 'Audit (AI calls)', History]] as Array<[ActivityTab, string, typeof Bot]>).map(([id, label, Icon]) => {
+          const active = tab === id
+          return (
+            <button
+              key={id}
+              onClick={() => setTab(id)}
+              className={`flex items-center gap-2 px-4 py-2 -mb-px text-sm font-medium transition-colors border-b-2 ${
+                active ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+            </button>
+          )
+        })}
+      </div>
+
+      {tab === 'audit' ? (
+        <AuditView rows={audit} loading={auditLoading} />
+      ) : null}
+
+      {tab === 'jobs' && (loading ? (
         <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
       ) : jobs.length === 0 ? (
         <div className="text-center py-16 text-muted-foreground">
@@ -148,7 +214,70 @@ export default function Agents() {
             </tbody>
           </table>
         </div>
-      )}
+      ))}
+    </div>
+  )
+}
+
+// ── Audit (AI calls) view — merged from the old standalone module ──
+function AuditView({ rows, loading }: { rows: AiGeneration[]; loading: boolean }) {
+  if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+  if (rows.length === 0) return (
+    <div className="text-center py-16 text-muted-foreground">
+      <History className="h-10 w-10 mx-auto mb-3 opacity-20" />
+      <p className="text-sm">No AI calls yet — once agents run, every call lands here with its cost + token count.</p>
+    </div>
+  )
+  const totalCents = rows.reduce((acc, r) => acc + (r.cost_cents ?? 0), 0)
+  return (
+    <div className="space-y-3">
+      <div className="text-xs text-muted-foreground">
+        Last 100 calls · total <strong className="font-mono">${(totalCents / 100).toFixed(2)}</strong>
+      </div>
+      <div className="border border-border rounded-lg overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/30">
+            <tr className="text-left text-xs font-mono tracking-widest uppercase text-muted-foreground">
+              <th className="px-3 py-2">Feature</th>
+              <th className="px-3 py-2">Provider · Model</th>
+              <th className="px-3 py-2 text-right">Tokens</th>
+              <th className="px-3 py-2 text-right">Cost</th>
+              <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2">When</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.id} className="border-t border-border">
+                <td className="px-3 py-1.5">
+                  <p className="text-xs">{r.feature ?? '—'}</p>
+                  {r.task_type && <p className="text-[10px] text-muted-foreground">{r.task_type}</p>}
+                </td>
+                <td className="px-3 py-1.5 text-xs">
+                  <span className="text-muted-foreground">{r.provider ?? '?'} ·</span>{' '}
+                  <span className="font-mono">{r.model ?? '?'}</span>
+                </td>
+                <td className="px-3 py-1.5 text-right font-mono text-xs">
+                  {(r.tokens_in ?? 0) + (r.tokens_out ?? 0)}
+                </td>
+                <td className="px-3 py-1.5 text-right font-mono text-xs">
+                  ${((r.cost_cents ?? 0) / 100).toFixed(3)}
+                </td>
+                <td className="px-3 py-1.5 text-xs">
+                  {r.status === 'ok' ? (
+                    <span className="text-emerald-700">ok</span>
+                  ) : (
+                    <span className="text-red-700">{r.status ?? 'error'}</span>
+                  )}
+                </td>
+                <td className="px-3 py-1.5 text-xs text-muted-foreground">
+                  {new Date(r.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
