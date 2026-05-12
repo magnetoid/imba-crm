@@ -739,9 +739,13 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "recommendation"}`
             <CallCoachCard key={a.id} activity={a} />
           ))}
 
-          {/* Activity timeline */}
-          <div className="border border-border rounded-lg p-5 bg-card shadow-sm">
-            <h3 className="text-sm font-medium text-foreground mb-4">Activity timeline</h3>
+          {/* Activity timeline (collapsible) */}
+          <details className="border border-border rounded-lg bg-card shadow-sm group" open>
+            <summary className="px-5 py-3 cursor-pointer list-none flex items-center justify-between text-sm font-medium text-foreground">
+              <span>Activity timeline</span>
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground group-open:rotate-180 transition-transform" />
+            </summary>
+            <div className="px-5 pb-5 pt-2">
             <form onSubmit={addActivity} className="flex flex-col gap-3 mb-5">
               <div className="flex gap-2">
                 <Select value={newActivity.type} onValueChange={v => setNewActivity(a => ({ ...a, type: v }))}>
@@ -801,7 +805,8 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "recommendation"}`
                 <p className="text-xs text-muted-foreground/50 text-center py-4">No activities yet</p>
               )}
             </div>
-          </div>
+            </div>
+          </details>
         </div>
 
         {/* Right: AI sidebar */}
