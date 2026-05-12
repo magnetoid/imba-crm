@@ -749,15 +749,15 @@ export default function AISettings() {
             </div>
             <div className="flex items-center gap-2">
               <Switch
-                checked={(settings as unknown as { email_signature_enabled?: boolean }).email_signature_enabled ?? true}
-                onCheckedChange={v => setField('email_signature_enabled' as never, v as never)}
+                checked={settings.email_signature_enabled ?? true}
+                onCheckedChange={v => setField('email_signature_enabled', v)}
               />
               <Label className="font-normal text-xs">Append on every send</Label>
             </div>
           </div>
           <Textarea
-            value={(settings as unknown as { email_signature?: string }).email_signature ?? ''}
-            onChange={e => setField('email_signature' as never, e.target.value as never)}
+            value={settings.email_signature ?? ''}
+            onChange={e => setField('email_signature', e.target.value)}
             rows={5}
             placeholder={`Marko Tiosavljevic\nImba Marketing\nhttps://imbaproduction.com\n+381 …`}
             className="font-mono text-xs"
@@ -779,11 +779,11 @@ export default function AISettings() {
         </div>
 
         <SenderHealthCard
-          inboxHealth={(settings as unknown as { smtp_inbox_health?: SmtpInboxHealth }).smtp_inbox_health ?? null}
-          autoThrottle={(settings as unknown as { smtp_auto_throttle?: boolean }).smtp_auto_throttle ?? true}
-          maxBouncePct={(settings as unknown as { smtp_max_bounce_rate_pct?: number }).smtp_max_bounce_rate_pct ?? 5}
-          onAutoThrottleChange={v => setField('smtp_auto_throttle' as never, v as never)}
-          onMaxBouncePctChange={v => setField('smtp_max_bounce_rate_pct' as never, v as never)}
+          inboxHealth={(settings.smtp_inbox_health as SmtpInboxHealth | null) ?? null}
+          autoThrottle={settings.smtp_auto_throttle ?? true}
+          maxBouncePct={settings.smtp_max_bounce_rate_pct ?? 5}
+          onAutoThrottleChange={v => setField('smtp_auto_throttle', v)}
+          onMaxBouncePctChange={v => setField('smtp_max_bounce_rate_pct', v)}
         />
       </section>}
 
@@ -803,9 +803,9 @@ export default function AISettings() {
         </div>
         <LoopHealthChip
           enabled={!!settings.imap_enabled}
-          lastSyncedAt={(settings as unknown as { imap_last_synced_at?: string | null }).imap_last_synced_at ?? null}
-          lastErrorAt={(settings as unknown as { imap_last_error_at?: string | null }).imap_last_error_at ?? null}
-          lastError={(settings as unknown as { imap_last_error?: string | null }).imap_last_error ?? null}
+          lastSyncedAt={settings.imap_last_synced_at ?? settings.imap_last_success_at ?? null}
+          lastErrorAt={settings.imap_last_error_at ?? null}
+          lastError={settings.imap_last_error ?? null}
         />
 
         <div className="grid grid-cols-2 gap-4 mt-4 mb-4">
@@ -866,9 +866,9 @@ export default function AISettings() {
         </div>
         <LoopHealthChip
           enabled={!!settings.pop3_enabled}
-          lastSyncedAt={(settings as unknown as { pop3_last_synced_at?: string | null }).pop3_last_synced_at ?? null}
-          lastErrorAt={(settings as unknown as { pop3_last_error_at?: string | null }).pop3_last_error_at ?? null}
-          lastError={(settings as unknown as { pop3_last_error?: string | null }).pop3_last_error ?? null}
+          lastSyncedAt={settings.pop3_last_synced_at ?? settings.pop3_last_success_at ?? null}
+          lastErrorAt={settings.pop3_last_error_at ?? null}
+          lastError={settings.pop3_last_error ?? null}
         />
 
         <div className="grid grid-cols-2 gap-4 mt-4 mb-4">

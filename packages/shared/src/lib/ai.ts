@@ -46,6 +46,7 @@ export interface CRMRuntimeSettings {
   imap_folder: string
   imap_poll_seconds: number
   imap_last_success_at?: string | null
+  imap_last_synced_at?: string | null
   imap_last_error?: string | null
   imap_last_error_at?: string | null
   pop3_enabled: boolean
@@ -55,6 +56,7 @@ export interface CRMRuntimeSettings {
   pop3_username: string
   pop3_leave_on_server: boolean
   pop3_last_success_at?: string | null
+  pop3_last_synced_at?: string | null
   pop3_last_error?: string | null
   pop3_last_error_at?: string | null
   ai_outreach_tone: string
@@ -73,6 +75,22 @@ export interface CRMRuntimeSettings {
   nomo_mode?: 'chat-only' | 'approval' | 'autopilot'
   nomo_autopilot_tools?: string[]
   nomo_system_prompt?: string
+  // Deliverability + signature (Phase 10.5 + 12.5)
+  email_signature?: string | null
+  email_signature_enabled?: boolean
+  smtp_inbox_health?: Record<string, unknown> | null
+  smtp_inbox_health_at?: string | null
+  smtp_auto_throttle?: boolean
+  smtp_max_bounce_rate_pct?: number
+  smtp_max_complaint_rate_pct?: number
+  // AI cost-cap surface (Sprint 2)
+  ai_cap_state?: {
+    triggered_at: string
+    current_cents: number
+    cap_cents: number
+    period_start: string
+    action: 'block' | 'downgrade' | 'require_approval'
+  } | null
 }
 
 export interface ProviderCredentialStatus {

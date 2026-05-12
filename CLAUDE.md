@@ -85,6 +85,21 @@ A green typecheck on the dev branch is **not done**. The user expects autonomous
 - Rotating secrets (JWT, service key, SSH password) — these are shared with non-CRM services.
 - Anything that costs >$5 of agent / AI / Apify spend in a single run.
 
+## Glossary
+
+Used loosely across the codebase but worth pinning down:
+
+- **agent** — a *kind* of automated worker (e.g. `lead-finder`, `outreach-drafter`). Defined in `packages/inbox-puller/src/agents/<kind>.ts`.
+- **job** — a queued unit of work for one agent kind. Row in `crm_agent_jobs`. One job ↔ one agent kind, one optional `lead_id`, one `input` payload.
+- **run** — a single step inside a job. Row in `crm_agent_runs`. A job typically has 3-6 runs (load → fetch → save).
+- **lead** — the canonical contact record. `crm_leads`. One lead ↔ one person. Never call it "contact" or "prospect" in schema; only in operator-facing copy.
+- **company** — `crm_companies`. Distinct from lead — one company can have multiple leads.
+- **outreach email** — a single outbound message draft. `crm_outreach_emails`. The lifecycle is reflected in `status` (draft → approved → scheduled → sent → opened/replied/bounced/failed/cancelled). We don't have a separate `crm_outreach_attempts` table — re-sends create a new row.
+- **attempt** — colloquial only; not a table. If you mean "one specific send", say "outreach email row".
+- **inbox message** — `crm_inbox_messages`. Both directions: inbound from IMAP/POP3/widget, and outbound mirror rows created at send time so threads render instantly.
+- **thread** — `crm_inbox_threads` view (grouped by `thread_key`). Only surfaces threads with at least one inbound message.
+- **signal** — `crm_signals`. External event (funding round, hiring post, news mention, tech-stack change) routed via `route_signal()` trigger.
+
 ## Auto-memory
 
 Persistent memory lives at `~/.claude/projects/-Users-magnetoid-imba-crm/memory/`. Read `MEMORY.md` first; honor the feedback entries (especially `feedback_execution_style.md`); update entries that have gone stale rather than writing duplicates.
