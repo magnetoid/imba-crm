@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate, type NavigateFunction } from 'react-router-dom'
 import { LogOut, Loader2, Search, Sparkles } from 'lucide-react'
 import { supabase } from '@imba/shared/supabase'
 import { useSession, hasRole } from '@imba/shared/auth'
@@ -135,38 +135,13 @@ export default function CRMLayout() {
         </Suspense>
       </main>
 
-      <CommandDialog open={paletteOpen} onOpenChange={setPaletteOpen}>
-        <CommandInput placeholder="Jump to module, lead, or run an action…" />
-        <CommandList>
-          <CommandEmpty>No matches.</CommandEmpty>
-          {GROUPS.map(group => {
-            const visible = MODULES.filter(m =>
-              m.group === group.id && !m.hidden && (!m.roles || hasRole(session, ...m.roles))
-            ).sort((a, b) => a.order - b.order)
-            if (visible.length === 0) return null
-            return (
-              <CommandGroup key={group.id} heading={group.label}>
-                {visible.map(m => {
-                  const Icon = m.icon
-                  return (
-                    <CommandItem
-                      key={m.id}
-                      onSelect={() => {
-                        navigate(primaryPath(m))
-                        setPaletteOpen(false)
-                      }}
-                    >
-                      <Icon className="h-3.5 w-3.5" />
-                      {m.label}
-                      <CommandShortcut>{group.label}</CommandShortcut>
-                    </CommandItem>
-                  )
-                })}
-              </CommandGroup>
-            )
-          })}
-        </CommandList>
-      </CommandDialog>
+      <GlobalCommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        navigate={navigate}
+        session={session}
+        onOpenNomo={() => { setPaletteOpen(false); setNomoOpen(true) }}
+      />
 
       {/* Nomo: side panel + floating launcher */}
       <NomoPanel
@@ -189,5 +164,184 @@ export default function CRMLayout() {
         </button>
       )}
     </div>
+  )
+}
+
+// ── Global command palette ───────────────────────────────────────────
+// One Cmd+K input that searches: modules + leads (by name/email/company)
+// + inbox threads (by subject/last sender) + recent agent jobs + a
+// handful of one-tap actions. Each search type fires its own query at
+// most every 250ms; results render in grouped sections.
+
+interface PaletteLead {
+  id: string
+  name: string
+  email: string | null
+  company: string | null
+  stage: string | null
+}
+interface PaletteThread {
+  thread_key: string
+  subject: string
+  last_message_at: string
+  last_from_email: string | null
+  unread_count: number
+}
+interface PaletteJob {
+  id: string
+  agent_kind: string
+  status: string
+  created_at: string
+}
+
+function GlobalCommandPalette({
+  open, onOpenChange, navigate, session, onOpenNomo,
+}: {
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  navigate: NavigateFunction
+  session: ReturnType<typeof useSession>
+  onOpenNomo: () => void
+}) {
+  const [query, setQuery] = useState('')
+  const [leads, setLeads] = useState<PaletteLead[]>([])
+  const [threads, setThreads] = useState<PaletteThread[]>([])
+  const [jobs, setJobs] = useState<PaletteJob[]>([])
+  const [loading, setLoading] = useState(false)
+
+  // Debounced search. Empty query → no rows (only modules + actions show).
+  useEffect(() => {
+    if (!open) { setQuery(''); setLeads([]); setThreads([]); setJobs([]); return }
+  }, [open])
+
+  useEffect(() => {
+    const q = query.trim()
+    if (!q || !open) { setLeads([]); setThreads([]); setJobs([]); return }
+    setLoading(true)
+    const t = setTimeout(async () => {
+      const like = `%${q}%`
+      const [leadsRes, threadsRes, jobsRes] = await Promise.all([
+        supabase.from('crm_leads')
+          .select('id, name, email, company, stage')
+          .or(`name.ilike.${like},email.ilike.${like},company.ilike.${like}`)
+          .order('updated_at', { ascending: false }).limit(6),
+        supabase.from('crm_inbox_threads')
+          .select('thread_key, subject, last_message_at, last_from_email, unread_count')
+          .or(`subject.ilike.${like},last_from_email.ilike.${like}`)
+          .order('last_message_at', { ascending: false }).limit(5),
+        supabase.from('crm_agent_jobs')
+          .select('id, agent_kind, status, created_at')
+          .or(`agent_kind.ilike.${like},triggered_by.ilike.${like}`)
+          .order('created_at', { ascending: false }).limit(3),
+      ])
+      setLeads((leadsRes.data as PaletteLead[] | null) ?? [])
+      setThreads((threadsRes.data as PaletteThread[] | null) ?? [])
+      setJobs((jobsRes.data as PaletteJob[] | null) ?? [])
+      setLoading(false)
+    }, 250)
+    return () => clearTimeout(t)
+  }, [query, open])
+
+  function jump(path: string) {
+    navigate(path)
+    onOpenChange(false)
+  }
+
+  return (
+    <CommandDialog open={open} onOpenChange={onOpenChange}>
+      <CommandInput
+        placeholder="Jump anywhere — type a lead, subject, module, or action…"
+        value={query}
+        onValueChange={setQuery}
+      />
+      <CommandList>
+        <CommandEmpty>{loading ? 'Searching…' : 'No matches.'}</CommandEmpty>
+
+        {/* ── Quick actions ─────────────────────────────────────────── */}
+        <CommandGroup heading="Actions">
+          <CommandItem onSelect={() => jump('/admin/crm/inbox#__new')}>
+            <Sparkles className="h-3.5 w-3.5" />
+            Compose new message
+            <CommandShortcut>c</CommandShortcut>
+          </CommandItem>
+          <CommandItem onSelect={() => jump('/admin/crm/lead-finder')}>
+            <Search className="h-3.5 w-3.5" />
+            Find new prospects
+          </CommandItem>
+          <CommandItem onSelect={onOpenNomo}>
+            <Sparkles className="h-3.5 w-3.5" />
+            Ask Nomo
+            <CommandShortcut>⌘J</CommandShortcut>
+          </CommandItem>
+          <CommandItem onSelect={() => jump('/admin/crm/settings')}>
+            <Sparkles className="h-3.5 w-3.5" />
+            Open Settings
+          </CommandItem>
+        </CommandGroup>
+
+        {/* ── Search results ───────────────────────────────────────── */}
+        {leads.length > 0 && (
+          <CommandGroup heading={`Leads (${leads.length})`}>
+            {leads.map(l => (
+              <CommandItem key={l.id} onSelect={() => jump(`/admin/crm/${l.id}`)}>
+                <span className="font-medium">{l.name}</span>
+                {l.company && <span className="text-muted-foreground">· {l.company}</span>}
+                {l.email && <span className="text-[10px] text-muted-foreground/70">{l.email}</span>}
+                <CommandShortcut>{l.stage ?? 'lead'}</CommandShortcut>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+
+        {threads.length > 0 && (
+          <CommandGroup heading={`Inbox (${threads.length})`}>
+            {threads.map(t => (
+              <CommandItem
+                key={t.thread_key}
+                onSelect={() => jump(`/admin/crm/inbox#${encodeURIComponent(t.thread_key)}`)}
+              >
+                <span className="font-medium truncate">{t.subject || '(no subject)'}</span>
+                {t.last_from_email && <span className="text-muted-foreground truncate">· {t.last_from_email}</span>}
+                {t.unread_count > 0 && <CommandShortcut>{t.unread_count} new</CommandShortcut>}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+
+        {jobs.length > 0 && (
+          <CommandGroup heading={`Agent runs (${jobs.length})`}>
+            {jobs.map(j => (
+              <CommandItem key={j.id} onSelect={() => jump(`/admin/crm/agents/${j.id}`)}>
+                <span className="font-medium">{j.agent_kind}</span>
+                <span className="text-muted-foreground">{j.status}</span>
+                <CommandShortcut>{j.id.slice(0, 8)}</CommandShortcut>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+
+        {/* ── Module navigation (existing behavior) ────────────────── */}
+        {GROUPS.map(group => {
+          const visible = MODULES.filter(m =>
+            m.group === group.id && !m.hidden && (!m.roles || hasRole(session, ...m.roles))
+          ).sort((a, b) => a.order - b.order)
+          if (visible.length === 0) return null
+          return (
+            <CommandGroup key={group.id} heading={group.label}>
+              {visible.map(m => {
+                const Icon = m.icon
+                return (
+                  <CommandItem key={m.id} onSelect={() => jump(primaryPath(m))}>
+                    <Icon className="h-3.5 w-3.5" />
+                    {m.label}
+                    <CommandShortcut>{group.label}</CommandShortcut>
+                  </CommandItem>
+                )
+              })}
+            </CommandGroup>
+          )
+        })}
+      </CommandList>
+    </CommandDialog>
   )
 }
