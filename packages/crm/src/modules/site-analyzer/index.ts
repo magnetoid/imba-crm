@@ -11,6 +11,7 @@ export const module: CRMModule = {
   icon: Radar,
   group: 'find',
   order: 2,
+  hidden: true,                  // opened from LeadDetail "Analyze site" button
   routes: [
     { path: '', component: SiteAnalyzer, index: true },
     { path: ':id', component: AnalysisReport },

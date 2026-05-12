@@ -10,5 +10,6 @@ export const module: CRMModule = {
   icon: History,
   group: 'intel',
   order: 2,
+  hidden: true,                  // merged conceptually with Agents — reach via Cmd+K
   routes: [{ path: '', component: Audit, index: true }],
 }

@@ -10,5 +10,6 @@ export const module: CRMModule = {
   icon: FileCode,
   group: 'close',
   order: 3,
+  hidden: true,                  // reached from compose / outreach picker; sidebar too noisy
   routes: [{ path: '', component: Templates, index: true }],
 }

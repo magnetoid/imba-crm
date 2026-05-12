@@ -11,6 +11,7 @@ export const module: CRMModule = {
   group: 'intel',
   order: 5,
   roles: ['admin'],
+  hidden: true,                  // power-user — reach via Cmd+K
   routes: [
     { path: '', component: PromptRegistry, index: true },
   ],
