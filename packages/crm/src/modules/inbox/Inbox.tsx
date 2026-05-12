@@ -56,6 +56,7 @@ interface ThreadRow {
   latest_ai_category: string | null
   latest_ai_sentiment: string | null
   is_snoozed: boolean
+  has_spam: boolean
 }
 
 interface MessageRow {
@@ -106,7 +107,7 @@ interface SignalRow {
   url: string | null
 }
 
-type Tab = 'all' | 'needs_reply' | 'fyi' | 'sent' | 'snoozed' | 'drafts'
+type Tab = 'all' | 'needs_reply' | 'fyi' | 'sent' | 'snoozed' | 'spam' | 'drafts'
 
 const CACHE_KEY = 'inbox_threads_cache_v2'
 const DRAFT_KEY_PREFIX = 'inbox_draft_v1_'   // localStorage per thread_key (or __new)
@@ -448,6 +449,12 @@ export default function AIInbox() {
   const filteredThreads = useMemo(() => {
     const q = search.trim().toLowerCase()
     return threads.filter(t => {
+      // Spam threads only appear in the Spam tab. All other tabs hide
+      // them so newsletters / promotional / AI-flagged spam don't
+      // clutter real work.
+      if (tab === 'spam' && !t.has_spam) return false
+      if (tab !== 'spam' && t.has_spam) return false
+
       // "Needs reply" = the latest message in the thread is inbound and
       // we haven't followed up yet. Read-but-unanswered threads still
       // belong here — that's the exact case where the operator needs the
@@ -928,6 +935,33 @@ export default function AIInbox() {
   }
 
   // Block sender — adds the latest inbound from_email's domain (or the
+  // Mark all messages in the thread as spam — moves them to the Spam
+  // tab where the operator can review or recover. NON-DESTRUCTIVE:
+  // mail stays in the DB; just gets filtered out of the main inbox.
+  // Distinct from Block (which adds to skip-senders so future mail
+  // never even arrives).
+  async function markSpam() {
+    if (!selectedKey) return
+    const ids = messages.map(m => m.id)
+    if (ids.length === 0) return
+    const { error } = await supabase.from('crm_inbox_messages').update({ is_spam: true }).in('id', ids)
+    if (error) { toast.error(error.message); return }
+    toast.success('Moved to Spam')
+    setThreads(prev => prev.map(t => t.thread_key === selectedKey ? { ...t, has_spam: true } : t))
+    setSelectedKey(null); setMessages([])
+  }
+  // Recover from Spam — clears is_spam on every row in the thread.
+  async function notSpam() {
+    if (!selectedKey) return
+    const ids = messages.map(m => m.id)
+    if (ids.length === 0) return
+    const { error } = await supabase.from('crm_inbox_messages').update({ is_spam: false }).in('id', ids)
+    if (error) { toast.error(error.message); return }
+    toast.success('Restored to Inbox')
+    setThreads(prev => prev.map(t => t.thread_key === selectedKey ? { ...t, has_spam: false } : t))
+    setSelectedKey(null); setMessages([])
+  }
+
   // exact address) to crm_inbox_skip_senders. Future mail from that
   // pattern gets dropped on insert. Then archives the current thread.
   async function blockSender() {
@@ -974,10 +1008,13 @@ export default function AIInbox() {
               placeholder="Search… (⌘K)" className="h-8 pl-8 text-sm" />
           </div>
           <div className="flex gap-1 text-[11px] flex-wrap">
-            {(['all','needs_reply','fyi','sent','snoozed','drafts'] as Tab[]).map(t => {
+            {(['all','needs_reply','fyi','sent','snoozed','spam','drafts'] as Tab[]).map(t => {
+              const spamCount = threads.filter(x => x.has_spam).length
               const labels: Record<Tab, string> = {
                 all: 'All', needs_reply: 'Needs reply', fyi: 'FYI', sent: 'Sent',
-                snoozed: 'Snoozed', drafts: `Drafts${draftsList.length ? ` (${draftsList.length})` : ''}`,
+                snoozed: 'Snoozed',
+                spam: `Spam${spamCount > 0 ? ` (${spamCount})` : ''}`,
+                drafts: `Drafts${draftsList.length ? ` (${draftsList.length})` : ''}`,
               }
               return (
                 <button key={t} onClick={() => setTab(t)}
@@ -1227,6 +1264,15 @@ export default function AIInbox() {
                   <Send className="h-3.5 w-3.5 rotate-45" /> Forward
                 </Button>
                 <SnoozeMenu onPick={snoozeThread} />
+                {tab === 'spam' ? (
+                  <Button variant="ghost" size="sm" onClick={notSpam} className="gap-1 h-8 text-emerald-700 hover:text-emerald-800" title="Restore to Inbox (not spam)">
+                    <Check className="h-3.5 w-3.5" /> Not spam
+                  </Button>
+                ) : (
+                  <Button variant="ghost" size="sm" onClick={markSpam} className="gap-1 h-8 text-amber-700 hover:text-amber-800" title="Move to Spam tab (non-destructive)">
+                    <MailQuestion className="h-3.5 w-3.5" /> Mark spam
+                  </Button>
+                )}
                 <Button variant="ghost" size="sm" onClick={blockSender} className="gap-1 h-8 text-red-600 hover:text-red-700" title="Block this sender + archive">
                   <AlertCircle className="h-3.5 w-3.5" /> Block
                 </Button>

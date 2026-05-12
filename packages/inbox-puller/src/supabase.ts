@@ -303,10 +303,23 @@ async function threadInboundReply(leadId: string, receivedAt: string) {
     .in('status', ['sent', 'opened'])
 }
 
+// Categories the AI categorizer can return that should land the
+// message in the Spam tab. The operator can still recover it manually.
+// "newsletter" + "promotional" are common edge cases that aren't true
+// spam but also aren't worth seeing in the main Inbox.
+const SPAM_CATEGORIES = new Set([
+  'spam', 'promotional', 'newsletter', 'marketing', 'cold_outreach_blast',
+])
+function isSpamCategory(c: string | null | undefined): boolean {
+  return !!c && SPAM_CATEGORIES.has(c.toLowerCase())
+}
+
 export async function updateInboxAI(
   id: string,
   ai: { ai_category: string; ai_sentiment: string; ai_suggested_reply: string },
 ) {
-  const { error } = await supabase.from('crm_inbox_messages').update(ai).eq('id', id)
+  const patch: Record<string, unknown> = { ...ai }
+  if (isSpamCategory(ai.ai_category)) patch.is_spam = true
+  const { error } = await supabase.from('crm_inbox_messages').update(patch).eq('id', id)
   if (error) console.error(JSON.stringify({ msg: 'failed to update inbox ai fields', id, error: error.message }))
 }

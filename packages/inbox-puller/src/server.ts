@@ -84,8 +84,12 @@ export function startHttpServer() {
   // Health card. Reads workerState (in-memory) for the heartbeat data
   // and crm_runtime_settings for the per-channel sync state.
   app.get('/api/worker/health', async c => {
-    const uid = await verifyAuth(c.req.header('authorization'))
-    if (!uid) return c.json({ error: 'unauthorized' }, 401)
+    // Health is registered before the /api/worker/* admin middleware,
+    // so authenticate inline. Any valid JWT may read health — it's not
+    // sensitive data and any operator viewing the dashboard needs it.
+    const auth = c.req.header('authorization') || ''
+    const m = auth.match(/^Bearer\s+(.+)$/i)
+    if (!m || !verifyJwt(m[1])) return c.json({ error: 'unauthorized' }, 401)
     const { workerState } = await import('./index.js')
     const { data: rt } = await supabase
       .from('crm_runtime_settings')

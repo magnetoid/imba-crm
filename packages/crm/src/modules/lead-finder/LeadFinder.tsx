@@ -159,6 +159,19 @@ function SmartSearchPane() {
   const [apifyConfigured, setApifyConfigured] = useState<boolean | null>(null)
   const [recentJobs, setRecentJobs] = useState<RecentJob[]>([])
   const [elapsedSec, setElapsedSec] = useState(0)
+  // Per-step progress: rows of crm_agent_runs scoped to the active
+  // job. Each row is a step the worker logged via ctx.step() — the
+  // step_name + status + decision_summary make "what is the job doing
+  // right now" visible inline.
+  const [activeSteps, setActiveSteps] = useState<Array<{
+    id: string
+    step_no: number
+    step_name: string
+    status: string
+    decision_summary: string | null
+    started_at: string
+    finished_at: string | null
+  }>>([])
 
   // ── Load ICP rules + check Apify creds + recent jobs ──────────────
   const loadRecentJobs = useCallback(async () => {
@@ -219,18 +232,23 @@ function SmartSearchPane() {
     toast.success('Loaded criteria — adjust and search again')
   }
 
-  // ── Poll active job until finished, then load saved leads ─────────
+  // ── Poll active job + per-step runs until finished ───────────────
   useEffect(() => {
     if (!activeJob) return
     if (activeJob.status === 'finished' || activeJob.status === 'failed' || activeJob.status === 'cancelled') return
     const t = setInterval(async () => {
-      const { data } = await supabase
-        .from('crm_agent_jobs')
-        .select('id, status, output, error, created_at, input')
-        .eq('id', activeJob.id)
-        .maybeSingle()
-      if (data) setActiveJob(data as RecentJob)
-    }, 2500)
+      const [{ data: jobData }, { data: stepData }] = await Promise.all([
+        supabase.from('crm_agent_jobs')
+          .select('id, status, output, error, created_at, input')
+          .eq('id', activeJob.id).maybeSingle(),
+        supabase.from('crm_agent_runs')
+          .select('id, step_no, step_name, status, decision_summary, started_at, finished_at')
+          .eq('job_id', activeJob.id)
+          .order('step_no', { ascending: true }),
+      ])
+      if (jobData) setActiveJob(jobData as RecentJob)
+      setActiveSteps((stepData as typeof activeSteps | null) ?? [])
+    }, 2000)
     return () => clearInterval(t)
   }, [activeJob])
 
@@ -258,6 +276,7 @@ function SmartSearchPane() {
     }
     setQueueing(true)
     setResults([])
+    setActiveSteps([])
     const startedAt = new Date().toISOString()
     setSearchStartedAt(startedAt)
     const searchString = [niche.trim(), city.trim(), country.trim()].filter(Boolean).join(' ')
@@ -412,14 +431,14 @@ function SmartSearchPane() {
         </p>
       </div>
 
-      {/* Job status banner */}
+      {/* Job status banner + per-step progress */}
       {activeJob && (
-        <div className={`rounded-lg p-4 border flex items-center justify-between ${
+        <div className={`rounded-lg border ${
           finished ? 'bg-emerald-50 border-emerald-200'
             : failed ? 'bg-red-50 border-red-200'
             : 'bg-blue-50 border-blue-200'
         }`}>
-          <div className="flex items-center gap-3 text-sm">
+          <div className="p-4 flex items-center gap-3 text-sm">
             {isRunning && <Loader2 className="h-4 w-4 animate-spin text-blue-700" />}
             {finished && <CheckCircle2 className="h-4 w-4 text-emerald-700" />}
             {failed && <AlertCircle className="h-4 w-4 text-red-700" />}
@@ -429,7 +448,6 @@ function SmartSearchPane() {
               <>
                 <span className="text-muted-foreground">·</span>
                 <span className="font-mono">{elapsedSec}s elapsed</span>
-                <span className="text-muted-foreground italic">— scraping Google Maps, dedup, save…</span>
               </>
             )}
             {finished && (
@@ -441,6 +459,40 @@ function SmartSearchPane() {
             )}
             {failed && activeJob.error && <span className="text-red-700 truncate max-w-md">{activeJob.error}</span>}
           </div>
+
+          {/* Per-step trace. Renders the live progression so the
+              operator sees exactly what the worker is doing right
+              now: run-actor (scraping) → dedupe → save-leads →
+              enqueue-enrichment. Each step shows its decision_summary
+              the moment the worker writes it. */}
+          {activeSteps.length > 0 && (
+            <div className="border-t border-border/50 px-4 py-3 space-y-1.5">
+              {activeSteps.map(s => {
+                const running = s.status === 'running'
+                const done    = s.status === 'done'
+                const failedS = s.status === 'failed'
+                const awaiting = s.status === 'awaiting_approval'
+                const elapsed = s.finished_at
+                  ? Math.round((new Date(s.finished_at).getTime() - new Date(s.started_at).getTime()) / 1000)
+                  : Math.round((Date.now() - new Date(s.started_at).getTime()) / 1000)
+                return (
+                  <div key={s.id} className="flex items-start gap-2 text-xs">
+                    <span className="flex-shrink-0 w-5 mt-0.5">
+                      {done     && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />}
+                      {running  && <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />}
+                      {failedS  && <AlertCircle className="h-3.5 w-3.5 text-red-600" />}
+                      {awaiting && <AlertCircle className="h-3.5 w-3.5 text-amber-600" />}
+                    </span>
+                    <span className="font-mono text-[11px] text-muted-foreground w-32 truncate flex-shrink-0">{s.step_name}</span>
+                    <span className="flex-1 leading-relaxed">
+                      {s.decision_summary ?? (running ? '…working' : s.status)}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground/60 font-mono flex-shrink-0">{elapsed}s</span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
 
