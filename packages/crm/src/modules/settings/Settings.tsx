@@ -699,7 +699,17 @@ export default function AISettings() {
           <Mail className="h-4 w-4 text-primary" />
           <h2 className="font-medium">SMTP Configuration</h2>
         </div>
-        <p className="text-xs text-muted-foreground mb-5">Stored in the database and used only by the send-email Edge Function.</p>
+        <p className="text-xs text-muted-foreground mb-3">
+          Pick a preset (auto-fills host/port/SSL) or fill manually for a custom server.
+        </p>
+        <SmtpPresetPicker
+          onApply={(p) => {
+            setField('smtp_host' as never, p.host as never)
+            setField('smtp_port' as never, p.port as never)
+            setField('smtp_secure' as never, p.secure as never)
+            toast.success(`Applied ${p.label} preset — fill in username + app password.`)
+          }}
+        />
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div className="flex flex-col gap-1.5"><Label>SMTP Host</Label><Input value={settings.smtp_host} onChange={e => setField('smtp_host', e.target.value)} /></div>
           <div className="flex flex-col gap-1.5"><Label>Port</Label><Input value={settings.smtp_port} onChange={e => setField('smtp_port', e.target.value)} /></div>
@@ -1237,5 +1247,47 @@ function IcpRulesSection() {
         </div>
       </div>
     </section>
+  )
+}
+
+// ── SMTP provider presets — pick a known provider, auto-fill host/port/SSL.
+// Operator only types username + app password.
+const SMTP_PRESETS: Array<{ label: string; host: string; port: string; secure: boolean; hint: string }> = [
+  { label: 'Gmail / Workspace', host: 'smtp.gmail.com',         port: '587', secure: false, hint: 'Use an app password (Google Account → Security → 2-step verification → App passwords).' },
+  { label: 'Outlook / Office 365', host: 'smtp.office365.com',  port: '587', secure: false, hint: 'Microsoft 365 SMTP AUTH may be disabled by default — enable in admin centre.' },
+  { label: 'Zoho Mail',         host: 'smtp.zoho.com',          port: '587', secure: false, hint: 'Generate an app-specific password under Zoho account → Security.' },
+  { label: 'Fastmail',          host: 'smtp.fastmail.com',      port: '465', secure: true,  hint: 'Settings → Password & security → App passwords → "Mail (SMTP)".' },
+  { label: 'iCloud',            host: 'smtp.mail.me.com',       port: '587', secure: false, hint: 'App-specific password from appleid.apple.com.' },
+  { label: 'Mailgun',           host: 'smtp.mailgun.org',       port: '587', secure: false, hint: 'Use SMTP credentials from Sending → Domain settings.' },
+  { label: 'Postmark',          host: 'smtp.postmarkapp.com',   port: '587', secure: false, hint: 'Username + password are both your Postmark Server Token.' },
+  { label: 'SendGrid',          host: 'smtp.sendgrid.net',      port: '587', secure: false, hint: 'Username is the literal string "apikey"; password is your SendGrid API key.' },
+  { label: 'Brevo (Sendinblue)',host: 'smtp-relay.brevo.com',   port: '587', secure: false, hint: 'SMTP key, not the main API key — generate under SMTP & API.' },
+  { label: 'Resend',            host: 'smtp.resend.com',        port: '587', secure: false, hint: 'Username = "resend"; password = your Resend API key.' },
+  { label: 'Plesk (self-hosted)', host: 'localhost',            port: '25',  secure: false, hint: 'If you run mail on the same box. Plain auth, no encryption needed for localhost.' },
+]
+
+function SmtpPresetPicker({ onApply }: { onApply: (p: typeof SMTP_PRESETS[number]) => void }) {
+  const [picked, setPicked] = useState<string>('')
+  const preset = SMTP_PRESETS.find(p => p.label === picked)
+  return (
+    <div className="bg-card border border-border rounded-lg p-3 mb-5 flex flex-wrap items-start gap-3">
+      <div className="flex items-center gap-2 flex-1 min-w-[260px]">
+        <Label className="text-xs whitespace-nowrap text-muted-foreground">Provider preset</Label>
+        <Select value={picked} onValueChange={setPicked}>
+          <SelectTrigger className="h-8 text-xs flex-1"><SelectValue placeholder="Pick a provider…" /></SelectTrigger>
+          <SelectContent>
+            {SMTP_PRESETS.map(p => <SelectItem key={p.label} value={p.label}>{p.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Button size="sm" disabled={!preset} onClick={() => preset && onApply(preset)} className="h-8 text-xs gap-1">
+          Apply
+        </Button>
+      </div>
+      {preset && (
+        <p className="text-[11px] text-muted-foreground basis-full">
+          <strong>Host:</strong> <code>{preset.host}</code> · <strong>Port:</strong> <code>{preset.port}</code> · <strong>SSL:</strong> <code>{preset.secure ? 'on' : 'off (STARTTLS)'}</code> — {preset.hint}
+        </p>
+      )}
+    </div>
   )
 }
