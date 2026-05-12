@@ -38,6 +38,7 @@ export default function CRMLayout() {
   const { session } = useSession()
   const navigate = useNavigate()
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [cheatsheetOpen, setCheatsheetOpen] = useState(false)
   const [nomoOpen, setNomoOpen] = useState(false)
   const [nomoLead, setNomoLead] = useState<{ id: string; label: string } | null>(null)
   const [nomoSeedPrompt, setNomoSeedPrompt] = useState<string | null>(null)
@@ -50,20 +51,27 @@ export default function CRMLayout() {
   // Hot-lead push alerts (speed-to-lead).
   useHotLeadAlerts()
 
-  // ⌘K command palette, ⌘J Nomo panel.
+  // Global shortcuts: ⌘K palette, ⌘J Nomo, ? cheatsheet.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement
+      const editing = t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA' || t?.isContentEditable
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         setPaletteOpen(o => !o)
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
         e.preventDefault()
         setNomoOpen(o => !o)
+      } else if (e.key === '?' && !editing) {
+        e.preventDefault()
+        setCheatsheetOpen(o => !o)
+      } else if (e.key === 'Escape' && cheatsheetOpen) {
+        setCheatsheetOpen(false)
       }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [])
+  }, [cheatsheetOpen])
 
   // 'nomo:open' custom event lets pages open the panel pre-pinned to
   // a lead and/or pre-filled with a starter prompt (e.g. the daily
@@ -142,6 +150,8 @@ export default function CRMLayout() {
         session={session}
         onOpenNomo={() => { setPaletteOpen(false); setNomoOpen(true) }}
       />
+
+      <KeyboardCheatsheet open={cheatsheetOpen} onClose={() => setCheatsheetOpen(false)} />
 
       {/* Nomo: side panel + floating launcher */}
       <NomoPanel
@@ -343,5 +353,70 @@ function GlobalCommandPalette({
         })}
       </CommandList>
     </CommandDialog>
+  )
+}
+
+// ── Keyboard cheatsheet (?) ────────────────────────────────────────
+// One modal listing every shortcut the SPA reacts to. Discoverability
+// for a system that already responds to ~15 keys.
+const SHORTCUTS: Array<{ section: string; rows: Array<[string, string]> }> = [
+  { section: 'Global', rows: [
+    ['⌘K',       'Open command palette (jump to anywhere)'],
+    ['⌘J',       'Open Nomo copilot side panel'],
+    ['?',        'Open this cheatsheet'],
+    ['Esc',      'Close any open dialog or panel'],
+  ]},
+  { section: 'Inbox', rows: [
+    ['j / k',    'Next / previous thread'],
+    ['r',        'Reply'],
+    ['Shift+R',  'Reply all'],
+    ['f',        'Forward'],
+    ['c',        'Compose new message'],
+    ['e',        'Archive thread'],
+    ['⌘⏎',       'Send draft'],
+  ]},
+  { section: 'Composer', rows: [
+    ['Tab',      'Move between To / Cc / Bcc / Subject / body'],
+    ['Click Cc/Bcc', 'Reveal additional recipient fields'],
+    ['Click ⏰',  'Schedule send (date + time picker)'],
+  ]},
+]
+
+function KeyboardCheatsheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  if (!open) return null
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-card border border-border rounded-lg shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="sticky top-0 bg-card border-b border-border px-5 py-3 flex items-center justify-between">
+          <h2 className="text-base font-semibold">Keyboard shortcuts</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-xs">
+            Esc to close
+          </button>
+        </div>
+        <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-6">
+          {SHORTCUTS.map(s => (
+            <div key={s.section}>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-2 font-mono">
+                {s.section}
+              </p>
+              <div className="space-y-1.5">
+                {s.rows.map(([key, label]) => (
+                  <div key={key} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="text-muted-foreground">{label}</span>
+                    <Kbd className="flex-shrink-0">{key}</Kbd>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="px-5 py-3 border-t border-border bg-muted/30 text-[11px] text-muted-foreground">
+          Press <Kbd>?</Kbd> anytime to bring this back.
+        </div>
+      </div>
+    </div>
   )
 }
