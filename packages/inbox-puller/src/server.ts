@@ -30,6 +30,7 @@ import { mountNomoBrief } from './nomo-brief.js'
 import { mountInboxAi } from './inbox-ai.js'
 import { mountSiteAnalyzer } from './site-analyzer.js'
 import { mountOG } from './og.js'
+import { mountMCP } from './mcp.js'
 
 const PORT = parseInt(process.env.WORKER_HTTP_PORT || '3030', 10)
 const JWT_SECRET = process.env.JWT_SECRET || ''
@@ -184,6 +185,9 @@ export function startHttpServer() {
 
   // ── Open Graph endpoints (link preview + shareable lead cards) ──
   mountOG(app)
+
+  // ── MCP server (exposes Nomo tool registry over JSON-RPC) ────────
+  mountMCP(app)
 
   // ── Open-pixel ────────────────────────────────────────────────────────
   app.get('/track/pixel/:idgif', async c => {
