@@ -110,7 +110,10 @@ async function verifyAndExtractClaims(authHeader: string | undefined): Promise<{
     if (!c.sub) return null
     const isAdmin = c.app_metadata?.role === 'admin' || c.user_metadata?.role === 'admin'
     return { uid: c.sub, isAdmin }
-  } catch { return null }
+  } catch (e) {
+    log('warn', 'invalid jwt — payload decode failed', { error: (e as Error).message })
+    return null
+  }
 }
 
 async function loadNomoSettings(): Promise<NomoSettings | null> {

@@ -49,7 +49,10 @@ async function verifyAuth(authHeader: string | undefined): Promise<string | null
     const c = JSON.parse(b64urlDecode(parts[1])) as { sub?: string; exp?: number }
     if (typeof c.exp === 'number' && c.exp * 1000 < Date.now()) return null
     return c.sub ?? null
-  } catch { return null }
+  } catch (e) {
+    console.warn(JSON.stringify({ level: 'warn', msg: 'invalid jwt — payload decode failed', source: 'nomo-brief', error: (e as Error).message, time: new Date().toISOString() }))
+    return null
+  }
 }
 
 async function loadSettings() {

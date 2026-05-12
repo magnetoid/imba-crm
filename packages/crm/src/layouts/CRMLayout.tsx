@@ -227,9 +227,16 @@ function GlobalCommandPalette({
   useEffect(() => {
     const q = query.trim()
     if (!q || !open) { setLeads([]); setThreads([]); setJobs([]); return }
+    // Sanitize before interpolating into the .or() filter expression.
+    // PostgREST treats `,` `:` `(` `)` `*` as operators / list separators;
+    // raw user input could break the parser or change query semantics.
+    // We strip them and the SQL `%` `_` wildcards so ilike sees a literal
+    // substring match.
+    const safeQ = q.replace(/[,:()*%_\\]/g, '').slice(0, 64)
+    if (!safeQ) { setLeads([]); setThreads([]); setJobs([]); return }
     setLoading(true)
     const t = setTimeout(async () => {
-      const like = `%${q}%`
+      const like = `%${safeQ}%`
       const [leadsRes, threadsRes, jobsRes] = await Promise.all([
         supabase.from('crm_leads')
           .select('id, name, email, company, stage')

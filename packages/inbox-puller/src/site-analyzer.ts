@@ -32,7 +32,10 @@ async function verifyAuth(authHeader: string | undefined): Promise<string | null
     const c = JSON.parse(b64urlDecode(parts[1])) as { sub?: string; exp?: number }
     if (typeof c.exp === 'number' && c.exp * 1000 < Date.now()) return null
     return c.sub ?? null
-  } catch { return null }
+  } catch (e) {
+    console.warn(JSON.stringify({ level: 'warn', msg: 'invalid jwt — payload decode failed', source: 'site-analyzer', error: (e as Error).message, time: new Date().toISOString() }))
+    return null
+  }
 }
 
 // HTML → readable text. Same shape as the inbox htmlToText.
@@ -93,9 +96,9 @@ export function mountSiteAnalyzer(app: Hono) {
       return c.json({ error: 'private addresses not allowed' }, 400)
     }
 
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
     try {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
       const res = await fetch(url.toString(), {
         method: 'GET',
         redirect: 'follow',
@@ -105,7 +108,6 @@ export function mountSiteAnalyzer(app: Hono) {
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         },
       })
-      clearTimeout(timer)
       const contentType = res.headers.get('content-type') ?? 'unknown'
       if (!contentType.includes('html')) {
         return c.json({ error: 'not html', status: res.status, content_type: contentType }, 415)
@@ -138,6 +140,11 @@ export function mountSiteAnalyzer(app: Hono) {
     } catch (err) {
       const msg = (err as Error).message
       return c.json({ error: msg.includes('abort') ? 'fetch timed out' : msg }, 502)
+    } finally {
+      // Always clear the timer — whether fetch succeeded, errored, or
+      // the body-read aborted mid-stream. Previously only the success
+      // path cleared it, leaking timers on every failure case.
+      clearTimeout(timer)
     }
   })
 }

@@ -14,6 +14,7 @@ import { Mail, Sparkles, Loader2, Send, CheckCircle2, Plus, Pencil, Trash2, Eye,
 import { buildLoomEmailHtml, parseLoomUrl } from '@imba/shared/integrations/loom'
 import { logActivity, interpolateTemplate, incrementTemplateUseCount } from '@/lib/crm-utils'
 import { logGeneration, markApproved, markEdited, markRejected, markSent } from '@/lib/aiGenerations'
+import { logError } from '@/lib/logError'
 
 interface CRMLead { id: string; name: string; company: string; email: string; service_interest: string; ai_score: number; ai_notes: string }
 interface OutreachEmail { id: string; lead_id: string; subject: string; body: string; status: string; ai_generated: boolean; ai_generation_id?: string | null; sent_at: string | null; created_at: string; crm_leads?: { id: string; name: string; company: string; email: string } | null }
@@ -182,7 +183,7 @@ export default function AIOutreach() {
       setComposeSubject(template.subject || '')
       setComposeBody(template.content)
     }
-    incrementTemplateUseCount(templateId).catch(() => {})
+    incrementTemplateUseCount(templateId).catch(err => logError(err, { where: 'incrementTemplateUseCount.outreach', templateId }, { silent: true }))
   }
   function copyEmail(email: OutreachEmail) { navigator.clipboard.writeText(`Subject: ${email.subject}\n\n${email.body}`); setCopied(email.id); setTimeout(() => setCopied(null), 2000) }
 

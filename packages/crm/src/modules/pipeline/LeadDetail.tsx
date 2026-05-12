@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '@imba/shared/supabase'
 import { buildCompanyContext, callAIJSON, callAIText, getCRMRuntimeSettings } from '@imba/shared/lib/ai'
@@ -86,6 +86,18 @@ export default function LeadDetail() {
     toast.success('Proposal draft queued — refresh in ~30s')
   }
 
+  // Mounted ref — skips setState if the component unmounts mid-fetch
+  // (operator navigates to a different lead before this one resolves).
+  // supabase-js doesn't expose AbortSignal on the query builder, so we
+  // use the cheaper mounted-flag check that has the same effect on the
+  // observable behavior (no state-on-unmounted-component warnings, no
+  // stale data clobbering a newer fetch).
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
+
   const loadAll = useCallback(async () => {
     if (!id) return
     const [leadRes, activitiesRes, emailsRes, proposalsRes, invoicesRes, stagesRes, templatesRes, assignmentRes] = await Promise.all([
@@ -98,6 +110,7 @@ export default function LeadDetail() {
       supabase.from('crm_outreach_sequences').select('id, name, description, steps').eq('is_active', true),
       supabase.from('crm_lead_sequences').select('id, sequence_id, current_step, status, next_due_at').eq('lead_id', id).in('status', ['active','paused']).order('created_at', { ascending: false }).limit(1).maybeSingle(),
     ])
+    if (!mountedRef.current) return    // unmounted while fetching — drop the result
     setLead(leadRes.data)
     setActivities(activitiesRes.data || [])
     setOutreachEmails(emailsRes.data || [])
@@ -605,7 +618,17 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "recommendation"}`
                   <Label className="text-xs">{label}</Label>
                   <Input
                     defaultValue={value || ''}
-                    onBlur={e => saveField(field, field === 'value' ? (parseFloat(e.target.value) || null) : (field === 'probability' ? parseInt(e.target.value) : e.target.value))}
+                    onBlur={e => {
+                      let next: string | number | null = e.target.value
+                      if (field === 'value') {
+                        const f = parseFloat(e.target.value)
+                        next = isNaN(f) ? null : f
+                      } else if (field === 'probability') {
+                        const i = parseInt(e.target.value, 10)
+                        next = isNaN(i) ? null : i
+                      }
+                      saveField(field, next)
+                    }}
                     className="h-8 text-sm"
                   />
                 </div>

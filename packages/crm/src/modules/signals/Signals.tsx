@@ -297,8 +297,8 @@ function RouteEditor({ route, onClose, onSaved }: { route: RouteRow | null; onCl
     if (!name.trim()) { toast.error('name required'); return }
     setSaving(true)
     const filter: Record<string, unknown> = {}
-    if (fitMin)    filter.fit_min    = parseInt(fitMin)
-    if (intentMin) filter.intent_min = parseInt(intentMin)
+    if (fitMin)    { const n = parseInt(fitMin, 10);    if (!isNaN(n)) filter.fit_min    = n }
+    if (intentMin) { const n = parseInt(intentMin, 10); if (!isNaN(n)) filter.intent_min = n }
     let action: Record<string, unknown>
     if (actionType === 'enqueue_agent') {
       action = { type: 'enqueue_agent', kind: actionVal || 'outreach-drafter' }

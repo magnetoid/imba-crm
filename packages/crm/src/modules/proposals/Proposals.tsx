@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { logActivity, interpolateTemplate, incrementTemplateUseCount } from '@/lib/crm-utils'
 import { logGeneration, markApproved, markRejected, markSent } from '@/lib/aiGenerations'
+import { logError } from '@/lib/logError'
 
 interface Template { id: string; name: string; content: string }
 
@@ -196,7 +197,7 @@ Keep it under 600 words.`
       setProposalContent(template.content)
       if (!proposalTitle) setProposalTitle(template.name)
     }
-    incrementTemplateUseCount(templateId).catch(() => {})
+    incrementTemplateUseCount(templateId).catch(err => logError(err, { where: 'incrementTemplateUseCount.proposals', templateId }, { silent: true }))
   }
 
   async function updateStatus(id: string, status: string, extra?: Record<string, unknown>) {

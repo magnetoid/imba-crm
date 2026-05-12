@@ -1064,7 +1064,7 @@ function SenderHealthCard({
             max={20}
             step="1"
             value={maxBouncePct}
-            onChange={e => onMaxBouncePctChange(Math.max(1, Math.min(20, parseInt(e.target.value) || 5)))}
+            onChange={e => onMaxBouncePctChange(Math.max(1, Math.min(20, parseInt(e.target.value, 10) || 5)))}
             className="w-16 text-center"
           />
           <span className="text-sm text-muted-foreground">%</span>

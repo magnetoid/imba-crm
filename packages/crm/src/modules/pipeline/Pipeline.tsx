@@ -15,6 +15,7 @@ import { Plus, Loader2, Sparkles, Users, TrendingUp, DollarSign, Target, ArrowRi
 import toast from 'react-hot-toast'
 import { autoScoreLead, logActivity, requestNotificationPermission, showNotification } from '@/lib/crm-utils'
 import { logGeneration } from '@/lib/aiGenerations'
+import { logError } from '@/lib/logError'
 import NomoBrief from './NomoBrief'
 import OnboardingCard from './OnboardingCard'
 
@@ -308,7 +309,7 @@ export default function CRMDashboard() {
     const { error: err } = await supabase.from('crm_leads').insert([{
       ...form,
       value: form.value ? parseFloat(form.value) : null,
-      probability: parseInt(form.probability) || 50,
+      probability: parseInt(form.probability, 10) || 50,
     }])
     setSaving(false)
     if (err) { setError(err.message); return }
@@ -390,7 +391,7 @@ export default function CRMDashboard() {
       } else {
         ok++
         if (autoScore && inserted) {
-          autoScoreLead(inserted).catch(() => {})
+          autoScoreLead(inserted).catch(err => logError(err, { where: 'autoScoreLead', leadId: inserted.id }, { silent: true }))
         }
       }
     }
@@ -932,7 +933,7 @@ Return ONLY valid JSON: {"score": NUMBER, "notes": "2-3 sentence follow-up recom
             </SelectContent>
           </Select>
           {/* Snooze */}
-          <Select onValueChange={(v) => void bulkSnooze(parseInt(v))}>
+          <Select onValueChange={(v) => void bulkSnooze(parseInt(v, 10))}>
             <SelectTrigger className="h-8 text-xs gap-1 w-auto px-3 border-0 bg-muted hover:bg-muted/80">
               <SelectValue placeholder="Snooze" />
             </SelectTrigger>
