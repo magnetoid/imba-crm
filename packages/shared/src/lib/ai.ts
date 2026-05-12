@@ -91,6 +91,9 @@ export interface CRMRuntimeSettings {
     period_start: string
     action: 'block' | 'downgrade' | 'require_approval'
   } | null
+  // Agent kill-switches + approval timeout (Sprint 4)
+  agent_kinds_disabled?: string[]
+  agent_approval_timeout_minutes?: number
 }
 
 export interface ProviderCredentialStatus {

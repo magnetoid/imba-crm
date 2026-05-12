@@ -1177,7 +1177,31 @@ export default function AIInbox() {
             <p className="text-[11px] mt-2 opacity-70">⌘K search · j/k navigate · c compose · r reply · Shift+R reply all · f forward · e archive</p>
           </div>
         ) : loadingThread ? (
-          <div className="flex items-center justify-center h-full"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+          // Skeleton states feel faster than a spinner. Render the
+          // shape of a thread (header + 3 message cards) while messages
+          // load — operator sees structure exists.
+          <div className="flex flex-col h-full">
+            <div className="border-b border-border px-5 py-3 flex items-center gap-3">
+              <div className="h-5 w-48 bg-muted animate-pulse rounded" />
+              <div className="ml-auto h-7 w-7 bg-muted animate-pulse rounded" />
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              {[0, 1, 2].map(i => (
+                <div key={i} className="border border-border rounded-lg p-3 bg-card">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-7 h-7 rounded-full bg-muted animate-pulse" />
+                    <div className="flex-1 h-3 w-32 bg-muted animate-pulse rounded" />
+                    <div className="h-3 w-16 bg-muted animate-pulse rounded" />
+                  </div>
+                  <div className="space-y-1.5 pt-1">
+                    <div className="h-3 w-full bg-muted/60 animate-pulse rounded" />
+                    <div className="h-3 w-5/6 bg-muted/60 animate-pulse rounded" />
+                    <div className="h-3 w-2/3 bg-muted/60 animate-pulse rounded" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         ) : (
           <>
             <div className="border-b border-border px-5 py-3 flex items-center gap-3">

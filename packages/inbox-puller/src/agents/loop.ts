@@ -26,9 +26,26 @@ export async function pollAgentJobs() {
   const jobs = (rows as JobRow[] | null) ?? []
   if (jobs.length === 0) return
 
+  // Read the disabled-kinds list once per batch so a flipped toggle
+  // takes effect within ~1 tick (60s default).
+  const { data: rt } = await supabase
+    .from('crm_runtime_settings')
+    .select('agent_kinds_disabled')
+    .eq('id', 1).maybeSingle()
+  const disabled = new Set((rt as { agent_kinds_disabled?: string[] } | null)?.agent_kinds_disabled ?? [])
+
   for (const job of jobs) {
     if (!isKnownAgent(job.agent_kind)) {
       await fail(job.id, `unknown agent_kind: ${job.agent_kind}`)
+      continue
+    }
+    if (disabled.has(job.agent_kind)) {
+      await supabase.from('crm_agent_jobs').update({
+        status: 'cancelled',
+        error: `agent kind "${job.agent_kind}" disabled by operator`,
+        finished_at: new Date().toISOString(),
+      }).eq('id', job.id)
+      log('info', 'skipped disabled agent kind', { jobId: job.id, kind: job.agent_kind })
       continue
     }
     // Resolve autonomy now so it's frozen for the job.

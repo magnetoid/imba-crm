@@ -85,7 +85,12 @@ export async function runLeadFinder(ctx: AgentContext, job: JobRow): Promise<Rec
       maxItems: maxSave * 2,
     })
     if (run.status !== 'SUCCEEDED') throw new Error(`apify run ${run.status}`)
-    s.summary(`Ran ${actorId} → ${run.items.length} raw items`)
+    if (run.items.length === 0) {
+      const query = (actorInput as { searchStringsArray?: string[] })?.searchStringsArray?.[0] ?? '(unknown)'
+      s.summary(`Apify returned 0 results for "${query}". Try: less specific niche, different city, drop the country filter, or check the actor accepts your query format.`)
+    } else {
+      s.summary(`Ran ${actorId} → ${run.items.length} raw items`)
+    }
     return run.items
   })
 

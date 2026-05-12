@@ -91,7 +91,18 @@ interface RunRow {
 }
 
 const APPROVAL_POLL_MS = 5000
-const APPROVAL_TIMEOUT_MS = 60 * 60 * 1000  // 1 hour
+const APPROVAL_TIMEOUT_FALLBACK_MS = 60 * 60 * 1000  // 1 hour if settings unreadable
+
+async function resolveApprovalTimeoutMs(): Promise<number> {
+  const { data } = await supabase
+    .from('crm_runtime_settings')
+    .select('agent_approval_timeout_minutes')
+    .eq('id', 1).maybeSingle()
+  const m = (data as { agent_approval_timeout_minutes?: number | null } | null)?.agent_approval_timeout_minutes
+  if (!m || m <= 0) return APPROVAL_TIMEOUT_FALLBACK_MS
+  // Clamp 5 minutes → 7 days to prevent footguns.
+  return Math.max(5, Math.min(7 * 24 * 60, m)) * 60_000
+}
 
 function log(level: 'info' | 'warn' | 'error', msg: string, extra: Record<string, unknown> = {}) {
   console.log(JSON.stringify({ level, msg, source: 'agent-runtime', ...extra, time: new Date().toISOString() }))
@@ -246,7 +257,8 @@ export function buildContext(job: JobRow): AgentContext {
 }
 
 async function pollForDecision(runId: string, jobId: string): Promise<RunRow> {
-  const deadline = Date.now() + APPROVAL_TIMEOUT_MS
+  const timeoutMs = await resolveApprovalTimeoutMs()
+  const deadline = Date.now() + timeoutMs
   let lastHeartbeat = Date.now()
   const HEARTBEAT_MS = 60_000   // touch updated_at on the job every minute
   while (Date.now() < deadline) {

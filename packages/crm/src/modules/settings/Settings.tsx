@@ -616,6 +616,35 @@ export default function AISettings() {
               </p>
             </div>
 
+            {/* Agent kill-switches (per-kind enable/disable) */}
+            <div className="border-t border-border pt-5 mb-5">
+              <h3 className="font-medium text-sm mb-1">Agent kill-switches</h3>
+              <p className="text-[11px] text-muted-foreground mb-3">
+                Disable specific agent kinds. Queued jobs for a disabled kind are auto-cancelled with a clear error so the operator sees what happened.
+              </p>
+              <AgentKillSwitchList
+                disabled={settings.agent_kinds_disabled ?? []}
+                onChange={(next) => setField('agent_kinds_disabled', next)}
+              />
+            </div>
+
+            {/* Approval timeout */}
+            <div className="flex items-center gap-3 mb-5">
+              <Label className="text-sm">Approval timeout</Label>
+              <Input
+                type="number"
+                min={5}
+                max={10080}
+                value={settings.agent_approval_timeout_minutes ?? 60}
+                onChange={e => {
+                  const n = parseInt(e.target.value, 10)
+                  setField('agent_approval_timeout_minutes', isNaN(n) ? 60 : Math.max(5, Math.min(10080, n)))
+                }}
+                className="w-24"
+              />
+              <span className="text-xs text-muted-foreground">minutes — how long an awaiting-approval step waits before auto-rejecting. Min 5, max 10080 (a week).</span>
+            </div>
+
             <Button onClick={() => void saveAll()} disabled={saving} className="gap-2">
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save settings
             </Button>
@@ -1353,5 +1382,54 @@ function LoopHealthChip({
       <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/60" />
       Enabled — waiting for first poll
     </span>
+  )
+}
+
+// ── Per-agent-kind kill-switch list ──────────────────────────────────
+// Shows one toggle per known agent kind. Off = the worker auto-cancels
+// any queued job for that kind with a clear error message.
+const KNOWN_AGENT_KINDS = [
+  'lead-finder', 'lead-enricher', 'lead-scorer',
+  'outreach-drafter', 'inbox-replier', 'meeting-booker',
+  'deal-health-scorer', 'call-analyzer',
+  'account-researcher', 'objection-tracker',
+  'proposal-writer', 'prospect-pipeline',
+] as const
+
+function AgentKillSwitchList({
+  disabled, onChange,
+}: { disabled: string[]; onChange: (next: string[]) => void }) {
+  const disabledSet = new Set(disabled)
+  function toggle(kind: string) {
+    const next = new Set(disabledSet)
+    if (next.has(kind)) next.delete(kind)
+    else next.add(kind)
+    onChange(Array.from(next))
+  }
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+      {KNOWN_AGENT_KINDS.map(k => {
+        const off = disabledSet.has(k)
+        return (
+          <label
+            key={k}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded border text-xs cursor-pointer transition-colors ${
+              off
+                ? 'bg-red-50 border-red-200 text-red-900'
+                : 'bg-card border-border hover:bg-muted/40'
+            }`}
+          >
+            <input
+              type="checkbox"
+              checked={!off}
+              onChange={() => toggle(k)}
+              className="accent-primary"
+            />
+            <span className="font-mono">{k}</span>
+            {off && <span className="ml-auto text-[10px] uppercase tracking-wider text-red-700">disabled</span>}
+          </label>
+        )
+      })}
+    </div>
   )
 }
