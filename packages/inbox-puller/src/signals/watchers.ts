@@ -130,21 +130,25 @@ async function watchLinkedInJobs(s: WatcherSettings) {
   const companies = await pickCompaniesToPoll(s.signal_poll_companies_per_run, 'sig_cp_li')
   if (companies.length === 0) return
 
-  const startUrls = companies
-    .filter(c => c.linkedin_url)
-    .map(c => ({ url: `${c.linkedin_url}/jobs/` }))
-  if (startUrls.length === 0) return
+  // The actor searches one company (by name) per run, so start one run
+  // per company that has a LinkedIn URL to match the results against.
+  const targets = companies.filter(c => c.linkedin_url)
+  if (targets.length === 0) return
 
   // Roles we treat as buying-intent: revenue / marketing / GTM ops.
   const HOT_KEYWORDS = ['marketing', 'sales', 'sdr', 'bdr', 'revops', 'growth', 'demand', 'video', 'content']
 
   try {
-    const run = await runApifyActor<{ companyUrl?: string; title?: string; postedAt?: string; jobUrl?: string }>(
-      cred,
-      { actorId: s.signal_linkedin_jobs_actor, input: { startUrls, scrapeJobsCount: 20 }, waitForFinish: 600 },
-    )
-    if (run.status !== 'SUCCEEDED') return
-    for (const item of run.items.slice(0, 500)) {
+    const runs = await Promise.allSettled(targets.map(c =>
+      runApifyActor<{ companyUrl?: string; title?: string; postedAt?: string; jobUrl?: string }>(
+        cred,
+        { actorId: s.signal_linkedin_jobs_actor, input: { company: c.name, timeRange: 'past-week', maxJobs: 20 }, waitForFinish: 600 },
+      ),
+    ))
+    const failed = runs.find((r): r is PromiseRejectedResult => r.status === 'rejected')
+    if (failed) log('warn', 'linkedin-jobs watcher run failed', { error: (failed.reason as Error).message })
+    const items = runs.flatMap(r => (r.status === 'fulfilled' && r.value.status === 'SUCCEEDED' ? r.value.items : []))
+    for (const item of items.slice(0, 500)) {
       if (!item.title || !item.companyUrl) continue
       const t = item.title.toLowerCase()
       if (!HOT_KEYWORDS.some(k => t.includes(k))) continue
